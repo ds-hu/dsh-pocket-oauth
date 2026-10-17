@@ -19,3 +19,14 @@ jobs:
           node-version: 22
       - run: npm ci
       - run: npm test
+      # client/client.js、mobile/client/client.js 与 transport/client/client.js 是**提交进仓库的
+      # 构建产物**，由 client/build.mjs 从 client/index.jsx 与 mobile/client/*、transport/client/*
+      # 生成（`pretest` 会重建一次，所以上面那步跑完后工作区里的产物应当与仓库中的完全一致）。
+      # 改了源码忘了重建 → 安装的人跑的是旧代码，表现为「改了没生效」。
+      # 这条守卫让漂移在 CI 上直接失败，而不是等用户来报。
+      - name: 构建产物与源码一致（无漂移）
+        run: |
+          if ! git diff --exit-code -- client/client.js mobile/client/client.js transport/client/client.js; then
+            echo '::error::客户端构建产物与源码不一致：本地跑 npm run build:client 后把产物一起提交'
+            exit 1
+          fi

@@ -1,0 +1,29 @@
+{
+  "name": "dsh-pocket-transport",
+  "version": "2.10.6",
+  "private": true,
+  "description": "弱网传输优化：官方静态资源强缓存 + 会话自愈 / 连接状态条，可独立开关",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*": "./locale/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client",
+    "locale",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "slots"
+      ]
+    }
+  }
+}

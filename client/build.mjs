@@ -1,6 +1,7 @@
 // dsh-pocket 网页客户端打包：
 //   - client/index.jsx → client/client.js（loader id: dsh-pocket 远程操控）
 //   - mobile/client/index.jsx → mobile/client/client.js（loader id: dsh-pocket-mobile 手机端 WebUI）
+//   - transport/client/index.jsx → transport/client/client.js（loader id: dsh-pocket-transport 弱网传输）
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +27,12 @@ export const TARGETS = Object.freeze([
     entry: resolve(packageRoot, 'mobile/client/index.jsx'),
     output: resolve(packageRoot, 'mobile/client/client.js'),
     override: process.env.DSH_POCKET_MOBILE_CLIENT_OUT,
+  },
+  {
+    id: process.env.DSH_POCKET_TRANSPORT_CLIENT_ID ?? 'dsh-pocket-transport',
+    entry: resolve(packageRoot, 'transport/client/index.jsx'),
+    output: resolve(packageRoot, 'transport/client/client.js'),
+    override: process.env.DSH_POCKET_TRANSPORT_CLIENT_OUT,
   },
 ]);
 

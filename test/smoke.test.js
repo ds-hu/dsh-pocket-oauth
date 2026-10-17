@@ -159,6 +159,12 @@ test('产物同步：客户端产物必须与源码构建结果逐字节一致�
       env: 'DSH_POCKET_MOBILE_CLIENT_OUT',
       committed: new URL('../mobile/client/client.js', import.meta.url),
     },
+    {
+      label: 'transport/client/client.js',
+      out: join(tmpDir, 'transport-client.js'),
+      env: 'DSH_POCKET_TRANSPORT_CLIENT_OUT',
+      committed: new URL('../transport/client/client.js', import.meta.url),
+    },
   ];
   try {
     for (const target of targets) {

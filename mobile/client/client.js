@@ -927,6 +927,7 @@ var touchCss = `
     overflow-x: auto !important;
     -webkit-overflow-scrolling: touch !important;
   }
+
 }
 
 /* \u684C\u9762\u7AEF\u9690\u85CF\u79FB\u52A8\u7AEF\u4E13\u5C5E\u63A7\u4EF6\uFF08\u4E0E MOBILE_BREAKPOINT = 1024 \u5BF9\u9F50\uFF09 */
@@ -938,6 +939,10 @@ var touchCss = `
   }
 }
 `;
+
+// lib/dom-contract.mjs
+var CONVERSATION_MARKER_SELECTOR = "[data-conversation-content]";
+var CONVERSATION_SESSION_ATTR = "data-conversation-session";
 
 // mobile/client/responsive-shell.js
 var MOBILE_BREAKPOINT = 1024;
@@ -953,8 +958,6 @@ var ROW_CLOSE_DELAY_MS = 120;
 var AUTO_CLOSE_DEDUPE_MS = 240;
 var CENTER_COL_SELECTOR = ".pI_x6G_centerCol";
 var MAIN_ANCHOR_SELECTOR = '[data-slot="main"]';
-var CONVERSATION_MARKER_SELECTOR = "[data-conversation-content]";
-var CONVERSATION_SESSION_ATTR = "data-conversation-session";
 var currentPrefs = { ...DEFAULT_PREFS };
 function readMobilePrefs() {
   return { ...currentPrefs };

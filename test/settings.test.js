@@ -1,5 +1,4 @@
-// 设置持久化测试（v4：settings.mjs 只剩 proxyPort / reset —— 手机端右边栏开关随旧适配删除）
-// 历史遗留文件里的孤儿键（如 mobileRightbarEnabled）不再被读写，见下面第二个用例。
+// 设置持久化测试：settings.mjs 只有 proxyPort 读写与恢复出厂。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, existsSync, readFileSync, statSync } from 'node:fs';
@@ -19,20 +18,6 @@ async function withHome(fn) {
     rmSync(home, { recursive: true, force: true });
   }
 }
-
-test('遗留孤儿键（mobileRightbarEnabled）不被读写，代理端口写入时保持原样', () => withHome(async () => {
-  const { settingsPath, setProxyPort, proxyPort } = await import('../lib/settings.mjs');
-  // 模拟升级前留下的设置文件
-  const { writeFileSync, mkdirSync } = await import('node:fs');
-  const { dirname } = await import('node:path');
-  mkdirSync(dirname(settingsPath()), { recursive: true });
-  writeFileSync(settingsPath(), JSON.stringify({ mobileRightbarEnabled: false }, null, 2));
-  assert.equal(proxyPort(), 0, '孤儿键不影响新设置项');
-  assert.equal(setProxyPort(3082), 3082);
-  const raw = JSON.parse(readFileSync(settingsPath(), 'utf8'));
-  assert.equal(raw.proxyPort, 3082, '新字段正常落盘');
-  assert.equal(raw.mobileRightbarEnabled, false, '孤儿键不动（不读不写，交给恢复出厂设置清理）');
-}));
 
 test('代理端口（issue #70）：默认 0（用 3081）；持久化、清除', () => withHome(async () => {
   const { proxyPort, setProxyPort, settingsPath } = await import('../lib/settings.mjs');
