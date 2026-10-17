@@ -32,6 +32,7 @@ ls -l dsh-pocket
 | `client/**`（远程操控的客户端产物源码） | 先 `npm run build:client` 打包，再刷新页面 |
 | `mobile/client/**`（手机端 WebUI 的客户端源码：`styles.js` / `responsive-shell.js` / `settings-adapter.js` / `index.jsx`） | 先 `npm run build:client` 打包成 `mobile/client/client.js`，再刷新页面 |
 | `mobile/package.json`、`mobile/locale/**`（面板那条 row 的包身份与标题描述） | 重启 dsh web 生效（无产物要打） |
+| `cordis.patch.yml`（网关心跳等组合补丁） | 重启 dsh web 生效 |
 | `mobile/` 目录本身挪了位置/改了名 | 同步改 `scripts/link-mobile-package.mjs` 里的 `MOBILE_NAME` 与目标目录（它靠 `<包根>/mobile` 定位子包） |
 
 ```sh
@@ -55,6 +56,29 @@ npm test                  # 建议顺手跑一遍（沙箱内 `node --test` 会�
 | `dsh-pocket-mobile`（手机端 WebUI） | 面板里有「配置」按钮，可开关遮罩、输入框优化、设置分步导航；**把浏览器窗口缩到 1024px 以下**即可看到移动端排版（左上汉堡按钮 → 抽屉侧边栏） |
 | 只开手机端 | 窄屏排版生效；远程操控那半边的功能（代理 / OAuth）不可用 |
 
+### 静态资源强缓存怎么验证
+
+官方前端的 `dist/assets/**` 是 Vite 内容哈希产物，代理会给它们的 200 响应补 `immutable`：
+
+```sh
+# 1) 找一个真实产物名（本机免登录）
+ASSET=$(curl -s http://127.0.0.1:3081/ | grep -o '/assets/[^"]*\.js' | head -1)
+echo "$ASSET"
+
+# 2) 响应头必须带一年 immutable
+curl -sI -H 'Accept-Encoding: gzip, br' "http://127.0.0.1:3081$ASSET" | grep -i 'cache-control'
+# 期望：cache-control: public, max-age=31536000, immutable
+
+# 3) HTML 仍是 no-store（它是版本锚点，注入过 polyfill，不能缓存）
+curl -sI http://127.0.0.1:3081/ | grep -i 'cache-control'
+# 期望：cache-control: no-store
+
+# 4) 极速版退役路由：302 回官方界面（旧主屏幕图标不会变成死链）
+curl -sI http://127.0.0.1:3081/pocket-app/ | head -3
+# 期望：HTTP/1.1 302 Found + location: /
+```
+
+改完 `lib/proxy.mjs` 想在本机验证，必须先重启 dsh web（宿主半边是进程内模块）。重新打包客户端产物不适用于这条规则（它在宿主侧）。
 改了 `cordis.patch.yml` 的行结构后，可以先不重启、只用 CLI 验证组合结果：
 
 ```sh
@@ -144,3 +168,4 @@ grep -A2 'dsh-pocket:' ~/.dsh/profiles/web/pnpm-lock.yaml
 **那条 `dsh-pocket-mobile` row 一直 Not running / `failed to import`**：子包链接没建出来。先看 `ls ~/.dsh/profiles/<p>/node_modules/dsh-pocket/node_modules/`——若没有 `dsh-pocket-mobile`，说明 `postinstall` 没跑过（多半是那次 `add` 卡在 build-blocked）：在插件面板允许脚本后重跑一次 add 命令，或手动在该包目录里执行 `node scripts/link-mobile-package.mjs`。
 
 **端口被占**：`lsof -ti :3080` 或 `lsof -ti :3081` 查占用进程；dsh-pocket 的代理在 3081 被占时会自动顺延到下一个端口。
+

@@ -13,6 +13,7 @@ import {
   openDrawer,
 } from './responsive-shell.js';
 import { installSettingsAdapter } from './settings-adapter.js';
+import { createSessionHealer } from './session-healer.js';
 
 export const name = 'dsh-pocket-mobile';
 // locale / theme 都不再使用：少一条依赖弧就少一次挂载顺序约束。
@@ -377,6 +378,54 @@ function MobileConfigPage() {
 }
 
 /**
+ * 弱网连接与会话自愈状态条：
+ * 仅在移动端视口且（连接断开 / 正在重连 / 会话流报错 / 正在自愈补齐）时浮现，
+ * 提供一个「立即重连」的无阻塞动作，彻底告别「输入框消失要刷新」。
+ * （旧版这里还有一个「切到极速版 App」的链接，随 App 一起删除，见 ADR 0006。）
+ */
+function MobileConnectionBanner({ healer }) {
+  const mobile = useMobileViewport();
+  const snap = useSyncExternalStore(
+    (listener) => healer.subscribe(listener),
+    () => healer.getSnapshot(),
+  );
+  if (!mobile) return null;
+  const disconnected = snap.connState === 'disconnected' || snap.connState === 'connecting';
+  const sessionFault = snap.openState === 'error';
+  if (!disconnected && !sessionFault && !snap.healing) return null;
+
+  const label = snap.healing
+    ? '🔄 正在自动补齐会话状态…'
+    : snap.connState === 'disconnected'
+      ? '📡 连接已断开（输入框仍可编辑）'
+      : snap.connState === 'connecting'
+        ? '⏳ 正在重连服务器…'
+        : '⚠️ 会话流中断，点右侧立即恢复';
+
+  return h(
+    'div',
+    {
+      id: 'dsh-mobile-conn-banner',
+      role: 'status',
+      'aria-live': 'polite',
+    },
+    h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, label),
+    h(
+      'span',
+      { className: 'dsh-mobile-conn-actions' },
+      h(
+        'button',
+        {
+          type: 'button',
+          onClick: () => { void healer.healNow('banner-button'); },
+        },
+        '立即重连',
+      ),
+    ),
+  );
+}
+
+/**
  * 客户端插件注册入口
  * @param {object} ctx 客户端插件上下文
  */
@@ -391,6 +440,17 @@ export function apply(ctx) {
   // 2. 安装移动端设置弹窗两级导航转接器
   const disposeSettings = installSettingsAdapter();
   ctx.effect(() => disposeSettings, 'dsh-pocket-mobile: settings adapter');
+
+  // 2b. 安装弱网会话自愈器（监听 connection / sessions，失败或卡 loading 自动重连补齐）
+  const healer = createSessionHealer(ctx);
+  ctx.effect(() => () => healer.dispose(), 'dsh-pocket-mobile: session healer');
+  if (typeof ctx.inject === 'function') {
+    // 若 connection / sessions 比本插件晚就绪，就绪后再触发一次巡检
+    try {
+      ctx.inject(['connection'], () => { healer.check(); });
+      ctx.inject(['sessions'], () => { healer.check(); });
+    } catch { /* 测试桩无可选 inject 时忽略 */ }
+  }
 
   // 3. 汉堡抽屉按钮：注册进框架声明的 conversation.header.leading 槽位。
   //    该槽位是 single/root 且当前无人占用；框架给条目套的锚点是 display:contents，
@@ -418,6 +478,18 @@ export function apply(ctx) {
         }),
       },
       MobilePanelExit,
+    ),
+  );
+
+  // 3c. 弱网连接与会话自愈状态条：同样挂在 shell.overlay，仅在断线/流错误/自愈中显示
+  ctx.slots.inject('shell.overlay', () =>
+    ctx.slots.register(
+      {
+        name: 'shell.overlay',
+        id: 'dsh-pocket-mobile#conn-banner',
+        inject: () => ({ healer }),
+      },
+      MobileConnectionBanner,
     ),
   );
 

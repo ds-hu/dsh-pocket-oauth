@@ -580,3 +580,52 @@ Ethernet adapter WLAN:
     else process.env.WSLENV = prevWslEnv;
   }
 });
+
+// ---------- ADR 0006：极速版相关端点/视图已彻底移除 ----------
+
+test('RPC：status 不再下发 pocketApp / gateway 视图（App 已删除）', async () => {
+  const internals = stubInternals();
+  const service = createPocketService({ dshPort: 3080, port: 3081, internals });
+  const conn = fakeCtxConnection();
+  installPocketRpc({ connection: conn }, { service, log: { error() {}, warn() {} } });
+
+  const s = await conn.handler(POCKET_ENDPOINTS.status, {});
+  assert.equal(s.ok, true);
+  assert.equal('pocketApp' in s.value, false, '不再有 App 产物/开关视图');
+  assert.equal('gateway' in s.value, false, '不再有口袋网关统计');
+  assert.equal(s.value.proxyRunning, false);
+
+  await service.dispose();
+});
+
+test('RPC：app/cache 端点已从契约里移除，调用一律 bad-request', async () => {
+  const endpoints = Object.values(POCKET_ENDPOINTS);
+  for (const gone of ['pocket.app.get', 'pocket.app.set', 'pocket.cache.clear']) {
+    assert.ok(!endpoints.includes(gone), `${gone} 不应再出现在契约里`);
+  }
+  const internals = stubInternals();
+  const service = createPocketService({ dshPort: 3080, port: 3081, internals });
+  const conn = fakeCtxConnection();
+  installPocketRpc({ connection: conn }, { service, log: { error() {}, warn() {} } });
+  for (const endpoint of ['pocket.app.get', 'pocket.app.set', 'pocket.cache.clear']) {
+    const r = await conn.handler(endpoint, {});
+    assert.equal(r.ok, false, `${endpoint} 必须被拒绝`);
+    assert.equal(r.error.code, 'bad-request');
+  }
+  await service.dispose();
+});
+
+test('排障上下文：只描述官方界面 + 静态资源强缓存，不再提极速版/网关', async () => {
+  const { buildTroubleshootingContext, redactStatus } = await import('../client/api.js');
+  const status = redactStatus({
+    proxyRunning: true, proxyPort: 3081, dshPort: 3080,
+    oauth: { provider: 'gitee', configured: true, bound: true, boundLogin: 'alice', callbackOrigins: [] },
+  });
+  assert.equal('pocketApp' in status, false, 'redactStatus 不再产出 App 视图');
+  const md = buildTroubleshootingContext(status, { version: { current: '2.10.6', loaded: '2.10.6' }, ua: 'UA/1' });
+  assert.ok(md.includes('immutable'), '说明静态资源强缓存这条真实增益');
+  assert.ok(md.includes('官方 Web UI'), '说明手机打开的就是官方界面');
+  assert.ok(!md.includes('极速版'), '不再提已删除的极速版');
+  assert.ok(!md.includes('口袋网关'), '不再提已删除的口袋网关');
+  assert.ok(!md.includes('secret'), '不泄露任何凭据');
+});

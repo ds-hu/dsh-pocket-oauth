@@ -49,6 +49,10 @@ test('cordis.patch.yml：一个 bundle、两条 row，都是裸包名', () => {
   for (const row of rows) {
     assert.ok(!row.name.includes('/'), `${row.name} 必须是裸包名：带 "/" 的行名解析不到包`);
   }
+  // ADR 0005：弱网下放宽心跳容错窗口（这条覆盖也属于本 bundle 的契约）
+  assert.match(patch, /-\s*id:\s*typert-gateway/, '必须覆盖 typert-gateway 行（ADR 0005）');
+  assert.match(patch, /websocketHeartbeatIntervalMs:\s*10000/, 'WebSocket 心跳间隔放宽至 10000ms');
+  assert.match(patch, /streamInboxBytes:\s*1048576/, '流收件箱缓冲放宽至 1 MiB');
 });
 
 // ── 根 manifest：子包随包发布 + postinstall 建链 ─────────────────────────────
@@ -268,5 +272,45 @@ test('远程操控通道：端点集合里没有移动端端点（它们已随�
   const endpoints = Object.values(POCKET_ENDPOINTS);
   for (const gone of ['mobile.status', 'mobile.rightbar.setEnabled', 'mobile.fileRead']) {
     assert.ok(!endpoints.includes(gone), `${gone} 不应再出现在任何契约里`);
+  }
+});
+
+// ---------- ADR 0006：极速版已删除，打包形态随之收窄 ----------
+
+test('子包 manifest：不再携带 app 目录（极速版已删除）', async () => {
+  const { existsSync } = await import('node:fs');
+  assert.equal(mobileManifest.files.includes('app'), false, 'files 不应再包含 app');
+  assert.equal(mobileManifest.exports['./app/*'], undefined, 'app 子路径导出已删除');
+  assert.equal(existsSync(join(root, 'mobile', 'app')), false, 'mobile/app 目录已从仓库删除');
+  for (const rel of ['index.js', 'client', 'locale']) {
+    assert.ok(mobileManifest.files.includes(rel), `files 仍应包含 ${rel}`);
+  }
+});
+
+test('打包：tarball 里不出现 mobile/app（发行包不再带 PWA）', async () => {
+  const dir = tempDir('pack-noapp-');
+  try {
+    const { entries } = packAndExtract(dir);
+    const rels = entries.map((entry) => entry.rel);
+    assert.ok(!rels.some((rel) => rel.startsWith('mobile/app/')), 'tarball 不应包含 mobile/app/**');
+    assert.ok(!rels.includes('lib/gateway.mjs'), 'tarball 不应包含口袋网关');
+    assert.ok(!rels.includes('lib/pocket-app.mjs'), 'tarball 不应包含 App 静态服务');
+    assert.ok(!rels.includes('lib/cache.mjs'), 'tarball 不应包含尾部落盘缓存');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('client/build.mjs：只剩两个客户端产物，没有 PWA 构建入口', async () => {
+  const mod = await import('../client/build.mjs');
+  assert.equal(mod.buildPocketApp, undefined, 'buildPocketApp 已删除');
+  assert.equal(mod.APP_GZIP_BUDGET, undefined, 'PWA 体积预算已删除');
+  assert.equal(mod.TARGETS.length, 2, '两个客户端产物：远程操控 + 手机端 WebUI');
+});
+
+test('契约：极速版端点不在集合里（app.get / app.set / cache.clear）', () => {
+  const endpoints = Object.values(POCKET_ENDPOINTS);
+  for (const gone of ['pocket.app.get', 'pocket.app.set', 'pocket.cache.clear']) {
+    assert.ok(!endpoints.includes(gone), `${gone} 不应再出现在契约里`);
   }
 });

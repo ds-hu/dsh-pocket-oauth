@@ -31,6 +31,11 @@ import {
   readMobilePrefs,
 } from '../mobile/client/responsive-shell.js';
 import { installSettingsAdapter } from '../mobile/client/settings-adapter.js';
+import {
+  HEAL_MAX_ATTEMPTS,
+  activeConversationSessionId,
+  createSessionHealer,
+} from '../mobile/client/session-healer.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const bundle = readFileSync(join(root, 'mobile', 'client', 'client.js'), 'utf8');
@@ -878,4 +883,175 @@ test('全局面板返回键：注册进 shell.overlay，按 panelInfo 显隐并�
     /html\[data-dsh-mobile-panel\]\s+\.pI_x6G_centerCol\s*>\s*\[data-slot="main"\]\s*>\s*\*/,
     '面板页标题压在左上角，必须给返回键让出顶部一行',
   );
+});
+
+// ── 阶段 1 弱网止血：settling 输入框不消失 + 会话自愈器 ───────────────────────
+
+test('阶段 1 止血：settling 态输入框强制可见（且关闭 compactComposer 时仍然生效）', () => {
+  const cssAll = mobileCss({ compactComposer: true });
+  const cssNoCompact = mobileCss({ compactComposer: false });
+  for (const css of [cssAll, cssNoCompact]) {
+    assert.match(
+      css,
+      /\[data-phase="settling"\]\s+\[data-composer-seat\],\s*\[data-content-phase="settling"\]\s+\[data-composer-seat\]\s*\{\s*visibility:\s*visible\s*!important/,
+      'settling 态必须无条件强制 [data-composer-seat] visibility:visible',
+    );
+  }
+});
+
+test('阶段 1 止血：createSessionHealer 在会话 error / loading 超时后自动自愈并受限于 10 分钟 3 次上限', async () => {
+  let fakeNow = 100_000;
+  let connState = 'connected';
+  let openState = 'open';
+  const calls = { reconnect: 0, refresh: 0, refreshProjections: 0, retain: 0, release: 0 };
+  const connListeners = new Set();
+  const sessionListeners = new Set();
+
+  const fakeSession = {
+    getSnapshot: () => ({ openState }),
+    subscribe: (fn) => {
+      sessionListeners.add(fn);
+      return () => sessionListeners.delete(fn);
+    },
+  };
+  const ctx = {
+    connection: {
+      state: {
+        getSnapshot: () => connState,
+        subscribe: (fn) => {
+          connListeners.add(fn);
+          return () => connListeners.delete(fn);
+        },
+      },
+    },
+    sessions: {
+      list: { getSnapshot: () => ({ ids: ['sess-1'] }), subscribe: () => () => {} },
+      binding: (id) => (id === 'sess-1' ? { session: fakeSession } : undefined),
+      refresh: async () => { calls.refresh += 1; },
+      refreshProjections: async () => { calls.refreshProjections += 1; },
+      retain: () => {
+        calls.retain += 1;
+        return {
+          ready: Promise.resolve(),
+          release: () => { calls.release += 1; },
+        };
+      },
+    },
+  };
+  ctx.connection.reconnect = () => { calls.reconnect += 1; };
+
+  const doc = {
+    querySelector: (sel) => (sel === '[data-conversation-content]'
+      ? { getAttribute: (k) => (k === 'data-conversation-session' ? 'sess-1' : null) }
+      : null),
+  };
+  assert.equal(activeConversationSessionId(doc), 'sess-1');
+
+  const healer = createSessionHealer(ctx, {
+    doc,
+    loadingTimeoutMs: 30,
+    cooldownMs: 10,
+    now: () => fakeNow,
+  });
+
+  try {
+    // 1. 正常 open 态不触发自愈
+    assert.equal(calls.reconnect, 0);
+
+    // 2. 会话流中断（openState = 'error'）→ 自动触发自愈
+    openState = 'error';
+    for (const fn of sessionListeners) fn();
+    await new Promise((r) => setTimeout(r, 15));
+    assert.equal(calls.reconnect, 1, 'error 态触发第 1 次自动自愈');
+    assert.equal(calls.refreshProjections, 1, '刷新当前会话投影');
+    assert.equal(calls.retain, 1, '通过 retain 重新拉起 session.open()');
+    assert.equal(calls.release, 1, '临时引用随后释放');
+
+    // 3. 推进时间越过冷却期，再触发第 2、3 次，验证达到 HEAL_MAX_ATTEMPTS 后不再自动触发
+    fakeNow += 50;
+    healer.check();
+    await new Promise((r) => setTimeout(r, 15));
+    fakeNow += 50;
+    healer.check();
+    await new Promise((r) => setTimeout(r, 15));
+    assert.equal(calls.reconnect, HEAL_MAX_ATTEMPTS, '达到窗口内最大自动自愈次数（3 次）');
+
+    fakeNow += 50;
+    healer.check();
+    await new Promise((r) => setTimeout(r, 15));
+    assert.equal(calls.reconnect, HEAL_MAX_ATTEMPTS, '超过上限后不再自动触发死循环');
+
+    // 4. 用户点状态条「立即重连」按钮（manual=true）不受自动上限阻挡
+    await healer.healNow('manual-click');
+    assert.equal(calls.reconnect, HEAL_MAX_ATTEMPTS + 1, '手动重连始终放行');
+  } finally {
+    healer.dispose();
+  }
+});
+
+test('阶段 1 止血：慢加载不被打断——有进展时续命，真卡住才自愈', async () => {
+  const { createSessionHealer, progressFingerprint } = await import('../mobile/client/session-healer.js');
+  let openState = 'loading';
+  let seq = 1;
+  let now = 0;
+  const binding = { session: { getSnapshot: () => ({ openState, seq }), subscribe: () => () => {} } };
+  const ctx = {
+    sessions: { binding: () => binding },
+    connection: { state: { getSnapshot: () => 'connected', subscribe: () => () => {} } },
+  };
+  // 会话 ID 的主来源是 DOM（主栏根节点的 data-conversation-session）
+  const el = { getAttribute: (name) => (name === 'data-conversation-session' ? 's-1' : null), childElementCount: 0, querySelectorAll: () => [] };
+  const doc = { querySelector: () => el };
+  const healer = createSessionHealer(ctx, { doc, loadingTimeoutMs: 1000, now: () => now });
+
+  // 计时窗口内 seq 一直在前进（弱网下正常的长加载）→ 不许自愈
+  for (let i = 0; i < 5; i++) {
+    now += 900;
+    seq += 10;
+    healer.check();
+    await new Promise((r) => setTimeout(r, 950));
+  }
+  assert.equal(healer.getSnapshot().lastReason, null, '有进展时不得触发自愈');
+  assert.equal(healer.getSnapshot().attempts, 0);
+
+  // 之后彻底没有进展（黑洞）→ 才允许自愈
+  now += 2000;
+  await new Promise((r) => setTimeout(r, 1100));
+  assert.equal(healer.getSnapshot().lastReason, 'loading-stalled', '无进展才自愈');
+  assert.ok(healer.getSnapshot().attempts >= 1);
+
+  // 进度指纹必须能区分「有进展」与「没进展」
+  openState = 'loading';
+  const a = progressFingerprint('s-1', { ctx, doc });
+  seq += 1;
+  const b = progressFingerprint('s-1', { ctx, doc });
+  assert.notEqual(a, b, 'seq 前进 → 指纹变化');
+
+  healer.dispose();
+});
+
+test('阶段 1 止血：重连状态条是非阻塞的（不盖住输入框、可手动重连、断网才出现）', () => {
+  const css = mobileCss();
+  // 非阻塞：必须避开底部输入区，且不吞触摸事件
+  assert.match(css, /#dsh-mobile-conn-banner\s*\{[\s\S]{0,400}pointer-events:\s*none/,
+    '状态条不能吞掉触摸事件（否则弱网下反而更难点到输入框）');
+  const at = css.indexOf('#dsh-mobile-conn-banner {');
+  const banner = css.slice(at, at + 700);
+  // 位置：浮在输入框**上方**（留出 composer 的高度），不是压在最底部
+  const bottom = banner.match(/bottom:\s*max\((\d+)px/);
+  assert.ok(bottom, '状态条用 bottom 偏移定位');
+  assert.ok(Number(bottom[1]) >= 60, `状态条要给输入框让位（实际 ${bottom[1]}px）`);
+  assert.ok(!/bottom:\s*0/.test(banner), '不许贴底压住输入框');
+  assert.match(css, /#dsh-mobile-conn-banner \.dsh-mobile-conn-actions \{[\s\S]{0,120}pointer-events:\s*auto/,
+    '状态条本体不响应，但里面的按钮要能点（手动重连）');
+
+  // 行为：只有真的断开/自愈中才出现，正常时零占用
+  const src = readFileSync(join(root, 'mobile/client/index.jsx'), 'utf8');
+  assert.match(src, /dsh-mobile-conn-banner/, '状态条真的被渲染出来');
+  assert.match(src, /if \(!disconnected && !sessionFault && !snap\.healing\) return null/,
+    '一切正常时不渲染（弱网下也不该常驻占位）');
+  assert.match(src, /立即重连/, '给一个手动重连入口，不用等退避');
+  assert.match(src, /输入框仍可编辑/, '明确告诉用户输入框没坏（这正是原来的痛点）');
+  // ADR 0006：极速版 App 已删除，状态条不再有「切到 App」的出口
+  assert.ok(!/pocket-app/.test(src), '状态条里不应再出现 /pocket-app/ 链接');
 });

@@ -1,6 +1,8 @@
 // dsh-pocket 网页客户端打包：
 //   - client/index.jsx → client/client.js（loader id: dsh-pocket 远程操控）
 //   - mobile/client/index.jsx → mobile/client/client.js（loader id: dsh-pocket-mobile 手机端 WebUI）
+//
+// 极速版 PWA（mobile/app）已随 ADR 0006 删除，这里不再有第三个产物。
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';

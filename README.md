@@ -53,6 +53,7 @@ DSH Pocket 就是干这个的：**只暴露一个端口，登录一次 Gitee / G
 | 🗜️ 传输压缩         | 大 JSON 响应自动 gzip/brotli（长会话 17MB → ~1MB，brotli 质量 6：快且省流量），手机加载更快、更省流量                                                            |
 | 🧩 零额外服务       | 一个 npm 包（远程操控 + 手机端 WebUI 组件）；不需要自建服务器或中继（登录用你自己的 Gitee / GitHub 账号）                                                        |
 | 📱 手机端界面       | 手机打开就是电脑上的官方界面（同一个 `dsh web`、实时同屏），并自动套用窄屏优化：抽屉式侧边栏、设置两级导航、触屏输入框、Plan 审阅卡片                                        |
+| ⚡ 静态资源强缓存   | 官方前端的 `/assets/**` 是内容哈希产物，代理给它补 `immutable` 一年强缓存（HTML 仍 `no-store`）：首屏约 475 KB gzip 的 JS/CSS **第二次打开不再重复下载**，弱网下最直接的体感提升 |
 
 ### 🧩 两个可独立开关的组件
 
@@ -169,6 +170,8 @@ npx @deepseek-ai/dsh web
 | 手机打开一直回到登录页                                   | 浏览器没保存会话 cookie（Safari 在 `http://` + 纯 IP 上会丢 cookie，issue #91 有专门提示页）。换 Chromium 系浏览器，或改用 `https://` 隧道域名                                            |
 | 重启电脑后要重新登录                                     | 会话绑定 dsh web 进程（进程级随机密钥），**这是刻意设计**：进程重启即旧会话全部失效                                                                                                                                 |
 | 隧道域名变了                                             | OAuth 应用回调地址 + 设置页白名单两处都改，然后重开初始化页保存（需重新绑定）                                                                                                           |
+| 手机上**输入框 / 计划 / 选择卡片消失**                     | 官方界面在连接进入 `settling`/`error` 后会隐藏输入区（上游行为）。本插件已在窄屏下强制输入区常驻，并加了底部连接状态条 + 会话自愈；仍出现就点状态条里的「立即重连」，不要刷新整页。计划/选择卡片由客户端瞬时状态驱动，弱网闪断后可能丢，属已知上游限制（见 ADR 0006） |
+| 手机打开很慢 / 每次切回来都重新加载                        | 首次要下官方前端约 **475 KB gzip** 的 JS/CSS；之后走 `immutable` 强缓存，不再重复下载。长会话历史仍会在重连时整段重读（上游没有续传游标），代理只保证这些响应被压缩到 ~1 MB |
 | 点「重启 dsh web」后页面提示进程在后台运行                | 自重启的新进程是 detached 后台进程（不挂终端），是页内更新的标准做法；停止它：macOS/Linux `lsof -ti :3080 \| xargs kill -9`；Windows `netstat -ano \| findstr :3080` → `taskkill /PID <PID> /F` |
 | 想手动更新到最新版                                        | 重新安装一次并重启：`dsh plugin --profile web add github:cup113/dsh-pocket-oauth -w`（pnpm 会把版本 pin 到当时的 main 提交）；本地 clone 软链安装则 `git pull` 后重启 `dsh web`                                |
 
@@ -191,7 +194,7 @@ npx @deepseek-ai/dsh web
 | `lib/service.mjs`                  | 服务：代理生命周期（端口自适应）、状态快照（OAuth 视图 + 每条白名单地址的二维码 + 局域网 IP 候选）                                                        |
 | `lib/proxy.mjs`                    | 改头反向代理：Host/Origin → loopback，HTTP + WebSocket 透传 + polyfill 注入 + gzip/brotli 压缩 + **认证门**（loopback 免认证 / 其余要 OAuth 会话，fail closed）+ `/pocket-oauth/*`、`/pocket-setup` 路由 |
 | `lib/rpc-route.js`                 | RPC 传输层（`lib/web-rpc.js` 用）：webServer 挂载 / `rpc.handle` 回退 / 信任栅栏 / 4xx-5xx 分支（与 dsh-client-connection 的 `/api` 逐分支对齐）；将来移动端宿主半边可经 `dsh-pocket/lib/rpc-route.js` 复用 |
-| `lib/settings.mjs`                 | 设置持久化：代理端口 → `$DSH_HOME/dsh-pocket/settings.json`（旧版遗留的 `mobileRightbarEnabled` 孤儿键不再读写，随「恢复出厂设置」清除）                    |
+| `lib/settings.mjs`                 | 设置持久化：代理端口 → `$DSH_HOME/dsh-pocket/settings.json`（极速版时代的 `appEnabled`/`appEntry`/`cache*` 与更早的 `mobileRightbarEnabled` 都是孤儿键：不读不写，随「恢复出厂设置」整份清除）                    |
 | `lib/clipboard.mjs`                | 剪贴板写入（构建时内联进客户端产物）：`navigator.clipboard` + `execCommand` 兜底                                                                          |
 | `lib/web-rpc.js`                   | 远程操控的 loopback RPC（通道 `/dsh-pocket`）：`status` / `oauth.rotateSession` / `oauth.unbind` / `version` / `update` / `restart` / `pocket.reset`        |
 | `client/`                          | **远程操控**的客户端产物（`dsh.client` → `client/client.js`）：`index.jsx` 只启用设置页「手机访问」+ `isLoopback` 兜底；`api.js` 为它的契约与工具         |

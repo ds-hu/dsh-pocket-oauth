@@ -900,12 +900,67 @@ export const touchCss = `
     overflow-x: auto !important;
     -webkit-overflow-scrolling: touch !important;
   }
+
+  /* 阶段 1 弱网止血：框架在 openState==='loading' && shellPhase==='blank' 时置
+     data-phase="settling"，默认 CSS 设为 visibility:hidden —— 弱网重连/流失败重拉期间
+     输入框会突然消失。这里无条件保持输入框可见（放在 touchCss 中，不受 compactComposer 开关影响）。 */
+  [data-phase="settling"] [data-composer-seat],
+  [data-content-phase="settling"] [data-composer-seat] {
+    visibility: visible !important;
+  }
+
+  /* 弱网连接与补齐状态条 + Pocket App 快捷切入胶囊（挂在 shell.overlay，仅异常或窄屏时出现） */
+  #dsh-mobile-conn-banner {
+    position: fixed !important;
+    left: 12px !important;
+    right: 12px !important;
+    bottom: max(76px, calc(env(safe-area-inset-bottom, 8px) + 70px)) !important;
+    z-index: 1220 !important;
+    /* 非阻塞：本体不吃触摸事件（底下的正文照样能滚动/点按），只有按钮可点。
+       弱网下这条横幅会长期挂着，挡住操作比不显示更糟。 */
+    pointer-events: none !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 10px !important;
+    padding: 8px 12px !important;
+    border-radius: 10px !important;
+    font-size: 12px !important;
+    line-height: 1.4 !important;
+    background: var(--dsw-alias-bg-layer-2, rgba(31, 41, 55, 0.94)) !important;
+    color: var(--dsw-alias-label-primary, #f9fafb) !important;
+    border: 1px solid var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.14)) !important;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25) !important;
+    backdrop-filter: blur(8px) !important;
+  }
+
+  #dsh-mobile-conn-banner .dsh-mobile-conn-actions {
+    pointer-events: auto !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    flex-shrink: 0 !important;
+  }
+
+  #dsh-mobile-conn-banner button,
+  #dsh-mobile-conn-banner a {
+    padding: 4px 10px !important;
+    border-radius: 999px !important;
+    border: 1px solid var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.2)) !important;
+    background: var(--dsw-alias-button-primary-fill, #4f6ef7) !important;
+    color: #fff !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    text-decoration: none !important;
+    cursor: pointer !important;
+  }
 }
 
 /* 桌面端隐藏移动端专属控件（与 MOBILE_BREAKPOINT = 1024 对齐） */
 @media (min-width: 1024px) {
   #dsh-mobile-drawer-toggle,
   #dsh-mobile-sidebar-backdrop,
+  #dsh-mobile-conn-banner,
   .dsh-mobile-settings-back-bar {
     display: none !important;
   }

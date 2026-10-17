@@ -927,12 +927,67 @@ var touchCss = `
     overflow-x: auto !important;
     -webkit-overflow-scrolling: touch !important;
   }
+
+  /* \u9636\u6BB5 1 \u5F31\u7F51\u6B62\u8840\uFF1A\u6846\u67B6\u5728 openState==='loading' && shellPhase==='blank' \u65F6\u7F6E
+     data-phase="settling"\uFF0C\u9ED8\u8BA4 CSS \u8BBE\u4E3A visibility:hidden \u2014\u2014 \u5F31\u7F51\u91CD\u8FDE/\u6D41\u5931\u8D25\u91CD\u62C9\u671F\u95F4
+     \u8F93\u5165\u6846\u4F1A\u7A81\u7136\u6D88\u5931\u3002\u8FD9\u91CC\u65E0\u6761\u4EF6\u4FDD\u6301\u8F93\u5165\u6846\u53EF\u89C1\uFF08\u653E\u5728 touchCss \u4E2D\uFF0C\u4E0D\u53D7 compactComposer \u5F00\u5173\u5F71\u54CD\uFF09\u3002 */
+  [data-phase="settling"] [data-composer-seat],
+  [data-content-phase="settling"] [data-composer-seat] {
+    visibility: visible !important;
+  }
+
+  /* \u5F31\u7F51\u8FDE\u63A5\u4E0E\u8865\u9F50\u72B6\u6001\u6761 + Pocket App \u5FEB\u6377\u5207\u5165\u80F6\u56CA\uFF08\u6302\u5728 shell.overlay\uFF0C\u4EC5\u5F02\u5E38\u6216\u7A84\u5C4F\u65F6\u51FA\u73B0\uFF09 */
+  #dsh-mobile-conn-banner {
+    position: fixed !important;
+    left: 12px !important;
+    right: 12px !important;
+    bottom: max(76px, calc(env(safe-area-inset-bottom, 8px) + 70px)) !important;
+    z-index: 1220 !important;
+    /* \u975E\u963B\u585E\uFF1A\u672C\u4F53\u4E0D\u5403\u89E6\u6478\u4E8B\u4EF6\uFF08\u5E95\u4E0B\u7684\u6B63\u6587\u7167\u6837\u80FD\u6EDA\u52A8/\u70B9\u6309\uFF09\uFF0C\u53EA\u6709\u6309\u94AE\u53EF\u70B9\u3002
+       \u5F31\u7F51\u4E0B\u8FD9\u6761\u6A2A\u5E45\u4F1A\u957F\u671F\u6302\u7740\uFF0C\u6321\u4F4F\u64CD\u4F5C\u6BD4\u4E0D\u663E\u793A\u66F4\u7CDF\u3002 */
+    pointer-events: none !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 10px !important;
+    padding: 8px 12px !important;
+    border-radius: 10px !important;
+    font-size: 12px !important;
+    line-height: 1.4 !important;
+    background: var(--dsw-alias-bg-layer-2, rgba(31, 41, 55, 0.94)) !important;
+    color: var(--dsw-alias-label-primary, #f9fafb) !important;
+    border: 1px solid var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.14)) !important;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25) !important;
+    backdrop-filter: blur(8px) !important;
+  }
+
+  #dsh-mobile-conn-banner .dsh-mobile-conn-actions {
+    pointer-events: auto !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    flex-shrink: 0 !important;
+  }
+
+  #dsh-mobile-conn-banner button,
+  #dsh-mobile-conn-banner a {
+    padding: 4px 10px !important;
+    border-radius: 999px !important;
+    border: 1px solid var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.2)) !important;
+    background: var(--dsw-alias-button-primary-fill, #4f6ef7) !important;
+    color: #fff !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    text-decoration: none !important;
+    cursor: pointer !important;
+  }
 }
 
 /* \u684C\u9762\u7AEF\u9690\u85CF\u79FB\u52A8\u7AEF\u4E13\u5C5E\u63A7\u4EF6\uFF08\u4E0E MOBILE_BREAKPOINT = 1024 \u5BF9\u9F50\uFF09 */
 @media (min-width: 1024px) {
   #dsh-mobile-drawer-toggle,
   #dsh-mobile-sidebar-backdrop,
+  #dsh-mobile-conn-banner,
   .dsh-mobile-settings-back-bar {
     display: none !important;
   }
@@ -1276,6 +1331,322 @@ function installSettingsAdapter(doc = document) {
   };
 }
 
+// mobile/client/session-healer.js
+var HEAL_LOADING_MS = 1e4;
+function progressFingerprint(sessionId, { ctx, doc } = {}) {
+  const parts = [];
+  try {
+    const st = ctx?.sessions?.binding?.(sessionId)?.session?.getSnapshot?.();
+    if (st) {
+      parts.push(st.seq ?? "", st.openState ?? "", st.historyLength ?? st.messageCount ?? "");
+    }
+  } catch {
+  }
+  try {
+    const el = doc?.querySelector?.("[data-conversation-scroll]") ?? doc?.querySelector?.("[data-conversation-content]");
+    parts.push(el?.childElementCount ?? "", el?.querySelectorAll?.("[data-message-id],[data-turn]")?.length ?? "");
+  } catch {
+  }
+  return parts.join("|");
+}
+var HEAL_WINDOW_MS = 10 * 60 * 1e3;
+var HEAL_MAX_ATTEMPTS = 3;
+var HEAL_COOLDOWN_MS = 2500;
+function activeConversationSessionId(doc = typeof document !== "undefined" ? document : null) {
+  try {
+    const el = doc?.querySelector?.("[data-conversation-content]");
+    if (!el || typeof el.getAttribute !== "function") return null;
+    const id = el.getAttribute("data-conversation-session");
+    return typeof id === "string" && id.length > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+function createSessionHealer(ctx, opts = {}) {
+  const doc = opts.doc ?? (typeof document !== "undefined" ? document : null);
+  const loadingTimeoutMs = opts.loadingTimeoutMs ?? HEAL_LOADING_MS;
+  const windowMs = opts.windowMs ?? HEAL_WINDOW_MS;
+  const maxAttempts = opts.maxAttempts ?? HEAL_MAX_ATTEMPTS;
+  const cooldownMs = opts.cooldownMs ?? HEAL_COOLDOWN_MS;
+  const now = opts.now ?? (() => Date.now());
+  const listeners = /* @__PURE__ */ new Set();
+  const historyBySession = /* @__PURE__ */ new Map();
+  let disposed = false;
+  let loadingTimer = null;
+  let loadingSessionId = null;
+  let loadingFingerprint = null;
+  let sessionUnsub = null;
+  let observedSessionId = null;
+  let healing = false;
+  let lastReason = null;
+  let snapshot = Object.freeze({
+    connState: "connected",
+    sessionId: null,
+    openState: null,
+    healing: false,
+    attempts: 0,
+    lastReason: null
+  });
+  function emit() {
+    for (const fn of [...listeners]) {
+      try {
+        fn();
+      } catch {
+      }
+    }
+  }
+  function readConnState() {
+    try {
+      const s = ctx?.connection?.state?.getSnapshot?.();
+      if (s === "connected" || s === "connecting" || s === "disconnected") return s;
+      const gen = ctx?.connection?.generation?.getSnapshot?.();
+      if (gen !== void 0) return "connected";
+    } catch {
+    }
+    return "connected";
+  }
+  function resolveSessionId() {
+    const domId = activeConversationSessionId(doc);
+    if (domId) return domId;
+    try {
+      const list = ctx?.sessions?.list?.getSnapshot?.();
+      if (list && Array.isArray(list.ids)) {
+        for (const id of list.ids) {
+          const b = ctx?.sessions?.binding?.(id);
+          if (b) return id;
+        }
+      }
+    } catch {
+    }
+    return null;
+  }
+  function readOpenState(sessionId) {
+    if (!sessionId) return null;
+    try {
+      const binding = ctx?.sessions?.binding?.(sessionId);
+      const st = binding?.session?.getSnapshot?.();
+      return st?.openState ?? null;
+    } catch {
+      return null;
+    }
+  }
+  function attemptsFor(sessionId) {
+    if (!sessionId) return 0;
+    const rec = historyBySession.get(sessionId);
+    if (!rec) return 0;
+    const cutoff = now() - windowMs;
+    rec.timestamps = rec.timestamps.filter((t) => t > cutoff);
+    return rec.timestamps.length;
+  }
+  function canAutoHeal(sessionId) {
+    if (!sessionId) return false;
+    const count = attemptsFor(sessionId);
+    if (count >= maxAttempts) return false;
+    const rec = historyBySession.get(sessionId);
+    if (rec && now() - rec.lastAt < cooldownMs) return false;
+    return true;
+  }
+  function recordAttempt(sessionId) {
+    const ts = now();
+    let rec = historyBySession.get(sessionId);
+    if (!rec) {
+      rec = { timestamps: [], lastAt: 0 };
+      historyBySession.set(sessionId, rec);
+    }
+    const cutoff = ts - windowMs;
+    rec.timestamps = rec.timestamps.filter((t) => t > cutoff);
+    rec.timestamps.push(ts);
+    rec.lastAt = ts;
+  }
+  function clearLoadingTimer() {
+    if (loadingTimer !== null) {
+      clearTimeout(loadingTimer);
+      loadingTimer = null;
+    }
+    loadingSessionId = null;
+    loadingFingerprint = null;
+  }
+  function armLoadingTimer(sessionId) {
+    loadingSessionId = sessionId;
+    loadingFingerprint = progressFingerprint(sessionId, { ctx, doc });
+    loadingTimer = setTimeout(onLoadingTimeout, loadingTimeoutMs);
+  }
+  function onLoadingTimeout() {
+    loadingTimer = null;
+    if (disposed) return;
+    const sessionId = loadingSessionId;
+    if (!sessionId || readOpenState(sessionId) !== "loading") {
+      clearLoadingTimer();
+      return;
+    }
+    const fingerprint = progressFingerprint(sessionId, { ctx, doc });
+    if (fingerprint !== loadingFingerprint) {
+      armLoadingTimer(sessionId);
+      return;
+    }
+    if (!canAutoHeal(sessionId)) {
+      clearLoadingTimer();
+      return;
+    }
+    void performHeal("loading-stalled", { manual: false });
+  }
+  function syncSnapshot() {
+    if (disposed) return;
+    const connState = readConnState();
+    const sessionId = resolveSessionId();
+    const openState = readOpenState(sessionId);
+    const attempts = attemptsFor(sessionId);
+    if (sessionId !== observedSessionId) {
+      if (sessionUnsub) {
+        try {
+          sessionUnsub();
+        } catch {
+        }
+        sessionUnsub = null;
+      }
+      observedSessionId = sessionId;
+      if (sessionId) {
+        try {
+          const binding = ctx?.sessions?.binding?.(sessionId);
+          if (typeof binding?.session?.subscribe === "function") {
+            sessionUnsub = binding.session.subscribe(() => check());
+          }
+        } catch {
+        }
+      }
+    }
+    const next = Object.freeze({
+      connState,
+      sessionId,
+      openState,
+      healing,
+      attempts,
+      lastReason
+    });
+    const changed = next.connState !== snapshot.connState || next.sessionId !== snapshot.sessionId || next.openState !== snapshot.openState || next.healing !== snapshot.healing || next.attempts !== snapshot.attempts || next.lastReason !== snapshot.lastReason;
+    snapshot = next;
+    if (changed) emit();
+  }
+  async function performHeal(reason = "auto", { manual = false } = {}) {
+    if (disposed || healing) return false;
+    const sessionId = resolveSessionId();
+    if (!manual && sessionId && !canAutoHeal(sessionId)) {
+      syncSnapshot();
+      return false;
+    }
+    if (sessionId) recordAttempt(sessionId);
+    healing = true;
+    lastReason = reason;
+    syncSnapshot();
+    try {
+      try {
+        ctx?.connection?.reconnect?.();
+      } catch {
+      }
+      try {
+        await ctx?.sessions?.refresh?.();
+      } catch {
+      }
+      if (sessionId) {
+        try {
+          await ctx?.sessions?.refreshProjections?.(sessionId);
+        } catch {
+        }
+        const openState = readOpenState(sessionId);
+        if (openState === "error" || openState === "loading" || openState === "cold") {
+          try {
+            const ref = ctx?.sessions?.retain?.(sessionId, { source: "controllerOperation" });
+            if (ref && typeof ref.release === "function") {
+              Promise.resolve(ref.ready).catch(() => {
+              }).finally(() => {
+                try {
+                  ref.release();
+                } catch {
+                }
+              });
+            }
+          } catch {
+          }
+        }
+      }
+      return true;
+    } finally {
+      healing = false;
+      syncSnapshot();
+    }
+  }
+  function check() {
+    if (disposed) return;
+    syncSnapshot();
+    const { connState, sessionId, openState } = snapshot;
+    if (!sessionId) {
+      clearLoadingTimer();
+      return;
+    }
+    if (openState === "error" && connState === "connected") {
+      clearLoadingTimer();
+      if (canAutoHeal(sessionId)) {
+        void performHeal("session-error", { manual: false });
+      }
+      return;
+    }
+    if (openState === "loading") {
+      if (loadingSessionId !== sessionId || loadingTimer === null) {
+        clearLoadingTimer();
+        armLoadingTimer(sessionId);
+      }
+      return;
+    }
+    clearLoadingTimer();
+  }
+  const unsubs = [];
+  try {
+    const u1 = ctx?.connection?.state?.subscribe?.(() => check());
+    if (typeof u1 === "function") unsubs.push(u1);
+  } catch {
+  }
+  try {
+    const u2 = ctx?.connection?.generation?.subscribe?.(() => check());
+    if (typeof u2 === "function") unsubs.push(u2);
+  } catch {
+  }
+  try {
+    const u3 = ctx?.sessions?.list?.subscribe?.(() => check());
+    if (typeof u3 === "function") unsubs.push(u3);
+  } catch {
+  }
+  check();
+  return {
+    getSnapshot: () => snapshot,
+    subscribe(fn) {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    healNow: (reason = "manual") => performHeal(reason, { manual: true }),
+    check,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      clearLoadingTimer();
+      if (sessionUnsub) {
+        try {
+          sessionUnsub();
+        } catch {
+        }
+        sessionUnsub = null;
+      }
+      for (const u of unsubs) {
+        try {
+          u();
+        } catch {
+        }
+      }
+      unsubs.length = 0;
+      listeners.clear();
+    }
+  };
+}
+
 // mobile/client/index.jsx
 var name = "dsh-pocket-mobile";
 var inject = ["slots", "layout"];
@@ -1585,12 +1956,60 @@ function MobileConfigPage() {
     )
   );
 }
+function MobileConnectionBanner({ healer }) {
+  const mobile = useMobileViewport();
+  const snap = (0, import_react.useSyncExternalStore)(
+    (listener) => healer.subscribe(listener),
+    () => healer.getSnapshot()
+  );
+  if (!mobile) return null;
+  const disconnected = snap.connState === "disconnected" || snap.connState === "connecting";
+  const sessionFault = snap.openState === "error";
+  if (!disconnected && !sessionFault && !snap.healing) return null;
+  const label = snap.healing ? "\u{1F504} \u6B63\u5728\u81EA\u52A8\u8865\u9F50\u4F1A\u8BDD\u72B6\u6001\u2026" : snap.connState === "disconnected" ? "\u{1F4E1} \u8FDE\u63A5\u5DF2\u65AD\u5F00\uFF08\u8F93\u5165\u6846\u4ECD\u53EF\u7F16\u8F91\uFF09" : snap.connState === "connecting" ? "\u23F3 \u6B63\u5728\u91CD\u8FDE\u670D\u52A1\u5668\u2026" : "\u26A0\uFE0F \u4F1A\u8BDD\u6D41\u4E2D\u65AD\uFF0C\u70B9\u53F3\u4FA7\u7ACB\u5373\u6062\u590D";
+  return (0, import_react.createElement)(
+    "div",
+    {
+      id: "dsh-mobile-conn-banner",
+      role: "status",
+      "aria-live": "polite"
+    },
+    (0, import_react.createElement)("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, label),
+    (0, import_react.createElement)(
+      "span",
+      { className: "dsh-mobile-conn-actions" },
+      (0, import_react.createElement)(
+        "button",
+        {
+          type: "button",
+          onClick: () => {
+            void healer.healNow("banner-button");
+          }
+        },
+        "\u7ACB\u5373\u91CD\u8FDE"
+      )
+    )
+  );
+}
 function apply(ctx) {
   applyMobilePrefs(loadPrefs());
   const disposeShell = installResponsiveShell(ctx);
   ctx.effect(() => disposeShell, "dsh-pocket-mobile: responsive shell");
   const disposeSettings = installSettingsAdapter();
   ctx.effect(() => disposeSettings, "dsh-pocket-mobile: settings adapter");
+  const healer = createSessionHealer(ctx);
+  ctx.effect(() => () => healer.dispose(), "dsh-pocket-mobile: session healer");
+  if (typeof ctx.inject === "function") {
+    try {
+      ctx.inject(["connection"], () => {
+        healer.check();
+      });
+      ctx.inject(["sessions"], () => {
+        healer.check();
+      });
+    } catch {
+    }
+  }
   function MobileDrawerToggle() {
     if (!useMobileViewport()) return null;
     return (0, import_react.createElement)(DrawerToggleButton, { onClick: () => openDrawer(ctx) });
@@ -1611,6 +2030,17 @@ function apply(ctx) {
         })
       },
       MobilePanelExit
+    )
+  );
+  ctx.slots.inject(
+    "shell.overlay",
+    () => ctx.slots.register(
+      {
+        name: "shell.overlay",
+        id: "dsh-pocket-mobile#conn-banner",
+        inject: () => ({ healer })
+      },
+      MobileConnectionBanner
     )
   );
   ctx.slots.inject(

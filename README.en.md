@@ -52,6 +52,7 @@ What it looks like — the phone shows the exact same UI as your computer, live:
 | 🗜️ Compression           | Large JSON responses are gzip/brotli'd (17MB session → ~1MB; brotli q6: fast and small)                                                                                                                      |
 | 🧩 No extra service      | One npm package (Remote access + the Mobile Web UI component); no server or relay of your own (sign-in uses your own Gitee / GitHub account)                                                                  |
 | 📱 Phone UI              | The phone shows the same official UI as the computer (one `dsh web`, live-mirrored) and automatically gets the narrow-screen treatment: drawer sidebar, two-level settings navigation, touch composer, Plan review cards |
+| ⚡ Static asset cache   | The official UI hashes every file under `/assets/**`; the proxy adds `immutable` for a year (HTML stays `no-store`), so the ~475 KB gzip of JS/CSS is **never downloaded twice** — the most direct win on a weak link |
 
 ### 🧩 Two components, switched independently
 
@@ -172,6 +173,8 @@ Open `https://your-fixed-domain` on the phone → tap "**Sign in with Gitee**" (
 | The tunnel domain changed                            | Update the OAuth app callback URL **and** the settings allowlist, then re-save the setup page (re-binding required)                                                               |
 | After "Restart dsh web" the page says it runs in background | The new process is detached on purpose; stop it with `lsof -ti :3080 \| xargs kill -9` (macOS/Linux) or `netstat -ano \| findstr :3080` + `taskkill /PID <PID> /F` (Windows)  |
 | Stuck on 0.x                                         | `^0.x` can't jump to 1.x: update with `--latest` (`dsh plugin --profile web update dsh-pocket --latest -w`)                                                                        |
+| The **composer / plan / choice card disappears** on the phone | The official UI hides the composer once the connection enters `settling`/`error` (upstream behaviour). This plugin forces it visible on narrow screens and adds a bottom connection bar plus session self-healing — tap **Reconnect now** instead of reloading. Plan/choice cards are driven by transient client state and can be lost after a weak-network blip (known upstream limitation, see ADR 0006) |
+| Phone opens slowly / reloads on every switch              | The first load downloads ~**475 KB gzip** of official JS/CSS; after that the `immutable` cache serves it from disk. Long histories are still re-read on reconnect (upstream has no resume cursor); the proxy only guarantees those responses are compressed to ~1 MB |
 
 ## 💻 DSH Desktop
 
@@ -192,7 +195,7 @@ Open `https://your-fixed-domain` on the phone → tap "**Sign in with Gitee**" (
 | `lib/service.mjs`    | Service: proxy lifecycle (auto port fallback), status snapshot (OAuth view + a QR per allowlisted origin + LAN IP candidates)                                                    |
 | `lib/proxy.mjs`      | Header-rewriting reverse proxy: Host/Origin → loopback, transparent HTTP + WebSocket, polyfill injection, gzip/brotli, and the **auth gate** (loopback free / OAuth session otherwise, fail closed) plus `/pocket-oauth/*` and `/pocket-setup` routes |
 | `lib/rpc-route.js`   | RPC transport (used by `lib/web-rpc.js`): webserver mount / `rpc.handle` fallback / trust fence / 4xx-5xx branches (branch-for-branch with dsh-client-connection's `/api`); a future mobile host half can reuse it via `dsh-pocket/lib/rpc-route.js` |
-| `lib/settings.mjs`   | Settings persistence: proxy port → `$DSH_HOME/dsh-pocket/settings.json` (a legacy `mobileRightbarEnabled` orphan key is no longer read or written; a factory reset clears it)    |
+| `lib/settings.mjs`   | Settings persistence: proxy port → `$DSH_HOME/dsh-pocket/settings.json` (the old `appEnabled`/`appEntry`/`cache*` keys and the even older `mobileRightbarEnabled` are orphans: never read or written, cleared by a factory reset) |
 | `lib/clipboard.mjs`  | Clipboard write (inlined into the client bundle at build time): `navigator.clipboard` with an `execCommand` fallback                                                              |
 | `lib/web-rpc.js`     | Remote access loopback RPC (channel `/dsh-pocket`): `status` / `oauth.rotateSession` / `oauth.unbind` / `version` / `update` / `restart` / `pocket.reset`                          |
 | `client/`            | The **Remote access** client artifact (`dsh.client` → `client/client.js`): `index.jsx` only wires the "Phone access" settings tab and the `isLoopback` fallback; `api.js` holds its contract and helpers |

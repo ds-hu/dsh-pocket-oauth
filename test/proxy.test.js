@@ -849,3 +849,164 @@ test('createHandshakeTracker：窗口内累计、clear 清零、过期重新计�
   t.prune(now + 5000);
   assert.equal(t.exhausted('8.8.8.8'), false, '过期条目被清掉');
 });
+
+// ---------- ADR 0006：官方静态资源强缓存 + 极速版退役路由 ----------
+
+/** 假上游：模拟 dsh web 的静态产物（已 gzip 的 JS / 未压缩 JS / JSON / HTML）。 */
+async function assetUpstream() {
+  const { gzipSync } = await import('node:zlib');
+  const js = 'export const x = 1;\n'.repeat(120);
+  const gz = gzipSync(Buffer.from(js));
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? '/', 'http://x').pathname;
+    if (url === '/assets/gzipped.js') {
+      res.writeHead(200, {
+        'content-type': 'text/javascript; charset=utf-8',
+        'content-encoding': 'gzip',
+        vary: 'Accept-Encoding',
+        'content-length': String(gz.length),
+      });
+      res.end(gz);
+      return;
+    }
+    if (url.startsWith('/assets/')) {
+      res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' });
+      res.end(js);
+      return;
+    }
+    if (url === '/assets-missing.js') {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('not found');
+      return;
+    }
+    if (url.startsWith('/api/')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end('<html><head></head><body>ok</body></html>');
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  return { port: server.address().port, server, js };
+}
+
+test('immutableAssetCacheControl：只对 /assets/** 的 200 生效', async () => {
+  const { immutableAssetCacheControl } = await import('../lib/proxy.mjs');
+  assert.equal(immutableAssetCacheControl('/assets/index-5SrrfWpU.js', 200), 'public, max-age=31536000, immutable');
+  assert.equal(immutableAssetCacheControl('/assets/fonts/KaTeX_AMS-Regular-BQhdFMY1.woff2', 200), 'public, max-age=31536000, immutable');
+  assert.equal(immutableAssetCacheControl('/assets/index-5SrrfWpU.js', 404), null, '非 200 不设强缓存');
+  assert.equal(immutableAssetCacheControl('/', 200), null, 'HTML 文档不属于强缓存范围');
+  assert.equal(immutableAssetCacheControl('/api/events.mux', 200), null, 'API 不属于强缓存范围');
+  assert.equal(immutableAssetCacheControl('/plugins/??a/client.js&rev=x', 200), null,
+    'DSH 自己的 /plugins/** 已由 dsh-client-modules 设置 immutable，代理不重复接管');
+});
+
+test('端到端：/assets/** 补 immutable（上游已 gzip 的透传分支），内容不被破坏', async () => {
+  const up = await assetUpstream();
+  const proxy = await createPocketProxy({ port: 0, host: '127.0.0.1', upstream: { host: '127.0.0.1', port: up.port } });
+  try {
+    const res = await fetch(`http://127.0.0.1:${proxy.port}/assets/gzipped.js`, { headers: { 'accept-encoding': 'gzip, br' } });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+    assert.match(await res.text(), /export const x = 1/, '解压后内容一致（未被二次压缩/损坏）');
+  } finally {
+    await proxy.close();
+    await new Promise((r) => up.server.close(r));
+  }
+});
+
+test('端到端：/assets/** 未压缩时走压缩分支也必须带上 immutable', async () => {
+  const up = await assetUpstream();
+  const proxy = await createPocketProxy({ port: 0, host: '127.0.0.1', upstream: { host: '127.0.0.1', port: up.port } });
+  try {
+    const res = await fetch(`http://127.0.0.1:${proxy.port}/assets/index-plain.js`, { headers: { 'accept-encoding': 'gzip' } });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'public, max-age=31536000, immutable', '压缩分支同样带缓存头');
+    assert.equal(res.headers.get('content-encoding'), 'gzip', '走的是代理压缩分支');
+    assert.match(await res.text(), /export const x = 1/);
+  } finally {
+    await proxy.close();
+    await new Promise((r) => up.server.close(r));
+  }
+});
+
+test('端到端：HTML 仍 no-store、API 不加缓存头、非 200 不加缓存头', async () => {
+  const up = await assetUpstream();
+  const proxy = await createPocketProxy({ port: 0, host: '127.0.0.1', upstream: { host: '127.0.0.1', port: up.port } });
+  try {
+    const html = await fetch(`http://127.0.0.1:${proxy.port}/`, { headers: { accept: 'text/html' } });
+    assert.equal(html.headers.get('cache-control'), 'no-store', '注入过补丁的文档必须每次重新取（版本锚点）');
+
+    const api = await fetch(`http://127.0.0.1:${proxy.port}/api/x`, { headers: { accept: 'application/json' } });
+    assert.equal(api.headers.get('cache-control'), null, 'API 响应不设缓存头');
+
+    const missing = await fetch(`http://127.0.0.1:${proxy.port}/assets-missing.js`);
+    assert.equal(missing.status, 404);
+    assert.equal(missing.headers.get('cache-control'), null, '404 不设强缓存');
+  } finally {
+    await proxy.close();
+    await new Promise((r) => up.server.close(r));
+  }
+});
+
+test('退役路由（ADR 0006）：/pocket-app/** → 302 回 /，不再提供任何 App 资源', async () => {
+  const up = await assetUpstream();
+  const proxy = await createPocketProxy({ port: 0, host: '127.0.0.1', upstream: { host: '127.0.0.1', port: up.port } });
+  try {
+    for (const path of ['/pocket-app', '/pocket-app/', '/pocket-app/index.html', '/pocket-app/manifest.webmanifest']) {
+      const res = await fetch(`http://127.0.0.1:${proxy.port}${path}`, { redirect: 'manual' });
+      assert.equal(res.status, 302, `${path} 应 302（旧主屏幕图标不能变成死链）`);
+      assert.equal(res.headers.get('location'), '/', `${path} 回官方界面`);
+      assert.equal(res.headers.get('cache-control'), 'no-store');
+    }
+  } finally {
+    await proxy.close();
+    await new Promise((r) => up.server.close(r));
+  }
+});
+
+test('退役路由（ADR 0006）：/pocket-app/sw.js 返回自注销脚本，旧 Service Worker 会自己消失', async () => {
+  const up = await assetUpstream();
+  const proxy = await createPocketProxy({ port: 0, host: '127.0.0.1', upstream: { host: '127.0.0.1', port: up.port } });
+  try {
+    const res = await fetch(`http://127.0.0.1:${proxy.port}/pocket-app/sw.js`);
+    assert.equal(res.status, 200, '必须返回 JS 而不是重定向：SW 更新检查拿到 HTML 会当作解析失败');
+    assert.match(res.headers.get('content-type') ?? '', /text\/javascript/);
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+    assert.equal(res.headers.get('service-worker-allowed'), '/pocket-app/');
+    const body = await res.text();
+    assert.match(body, /caches\.delete/, '清空旧缓存');
+    assert.match(body, /registration\.unregister/, '注销自身');
+  } finally {
+    await proxy.close();
+    await new Promise((r) => up.server.close(r));
+  }
+});
+
+test('退役路由（ADR 0006）：/pocket-gw 的 WS 升级返回 410，不再落到上游', async () => {
+  const up = await assetUpstream();
+  const proxy = await createPocketProxy({ port: 0, host: '127.0.0.1', upstream: { host: '127.0.0.1', port: up.port } });
+  try {
+    const status = await new Promise((resolve, reject) => {
+      const sock = connect(proxy.port, '127.0.0.1', () => {
+        sock.write(
+          `GET /pocket-gw HTTP/1.1\r\nHost: x:3081\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+          `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`,
+        );
+      });
+      let buf = '';
+      const timer = setTimeout(() => { sock.destroy(); reject(new Error('hang: 没收到状态行')); }, 3000);
+      sock.on('data', (c) => {
+        buf += c.toString('latin1');
+        const m = buf.match(/^HTTP\/1\.1 (\d{3})/);
+        if (m) { clearTimeout(timer); sock.destroy(); resolve(Number(m[1])); }
+      });
+      sock.on('error', reject);
+    });
+    assert.equal(status, 410, '口袋网关已删除，握手被明确拒绝');
+  } finally {
+    await proxy.close();
+    await new Promise((r) => up.server.close(r));
+  }
+});
