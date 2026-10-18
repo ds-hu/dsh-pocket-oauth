@@ -11,6 +11,11 @@
     "./locale/*": "./locale/*",
     "./package.json": "./package.json"
   },
+  "files": [
+    "index.js",
+    "client",
+    "locale"
+  ],
   "dsh": {
     "client": {
       "platform": "web",

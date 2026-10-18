@@ -50,23 +50,27 @@ What it looks like — the phone shows the exact same UI as your computer, live:
 | 🚪 Sign out everywhere   | One click rotates the process-level session key, instantly invalidating every signed-in device                                                                                                               |
 | ⚡ Real-time sync        | Streaming rides a fully transparent WebSocket — **output on the computer scrolls on the phone**; built-in heartbeat keeps NAT/idle drops from silently killing the link (auto-reconnect)                      |
 | 🗜️ Compression           | Large JSON responses are gzip/brotli'd (17MB session → ~1MB; brotli q6: fast and small)                                                                                                                      |
-| 🧩 No extra service      | One npm package (Remote access + the Mobile Web UI component); no server or relay of your own (sign-in uses your own Gitee / GitHub account)                                                                  |
+| 🧩 No extra service      | One npm package (Remote access + Mobile Web UI + Weak-network transport); no server or relay of your own (sign-in uses your own Gitee / GitHub account)                                                                  |
 | 📱 Phone UI              | The phone shows the same official UI as the computer (one `dsh web`, live-mirrored) and automatically gets the narrow-screen treatment: drawer sidebar, two-level settings navigation, touch composer, Plan review cards |
+| ⚡ Static asset cache   | The official UI hashes every file under `/assets/**`; the **Weak-network transport** component makes the proxy add `immutable` for a year (HTML stays `no-store`), so the ~475 KB gzip of JS/CSS is **never downloaded twice** — the most direct win on a weak link |
 
-### 🧩 Two components, switched independently
+### 🧩 Three components, switched independently
 
-The package ships two components, and installing/updating stays a single command. Each has its own switch on the **Sidebar → Plugins → dsh-pocket** card:
+The package ships three components, and installing/updating stays a single command. Each has its own switch on the **Sidebar → Plugins → dsh-pocket** card:
 
 | Component | Owns | Switched off |
 | --- | --- | --- |
 | `dsh-pocket` (Remote access) | Single-port proxy, Gitee/GitHub OAuth, origin QR codes, update/restart | The proxy stops listening (3081 closes) and there is no "Phone access" tab; the phone can still reach the official UI directly (LAN / tunnel to your local dsh web) |
 | `dsh-pocket-mobile` (Mobile Web UI) | Active below 1024px: drawer sidebar, panel exit button, two-level settings navigation, touch composer, Plan / approval cards | The phone gets the plain desktop layout (56px icon rail with no way to expand it, settings columns squeezed) |
+| `dsh-pocket-transport` (Weak-network transport) | Immutable caching for the official assets, session self-healing (auto-reconnect after a stream break or a stuck load), a bottom connection banner, and "composer stays visible while settling" | Stock behaviour returns: the official assets are re-downloaded on every cold open, a broken stream needs a manual page reload, there is no banner. Mobile layout is unaffected |
 
-> **The mobile component ships its own client bundle**: the subpackage `dsh-pocket-mobile` (source in `mobile/`, installed together with the package) declares `dsh.client`, and `client/build.mjs` compiles its browser half into `mobile/client/client.js` — so that row has a **Configure** page where the backdrop, composer optimisation and stepped settings navigation can be turned off.
+> **Both subpackages ship a client bundle**: `dsh-pocket-mobile` (source in `mobile/`) and `dsh-pocket-transport` (source in `transport/`) are installed together with the package, each declares `dsh.client`, and `client/build.mjs` compiles each browser half into `<subpackage>/client/client.js`. The mobile row therefore has a **Configure** page (backdrop / composer optimisation / stepped settings navigation); the transport row is a plain switch.
 >
 > The switch writes the row's `disabled` override into the profile's `cordis.patch.yml` (the native DSH mechanism): the **host half starts/stops immediately**, while a client bundle enters or leaves the graph on the next page load — refresh once after switching.
+>
+> The transport component also carries a **composition patch** (`transport/cordis.patch.yml`: gateway WebSocket heartbeat 2000 → 10000 ms, stream inbox 1 MiB, see ADR 0005). It applies while the Loader composes the tree, so it is always present once the package is installed and does not follow the row switch; the switch controls the cache policy, self-healing and the banner.
 
-Settings only keeps Remote access ("Phone access": proxy / OAuth / QR / update / restart); there is **no** mobile-UI tab — the mobile tweaks live on the **Plugins → dsh-pocket** card.
+Settings only keeps Remote access ("Phone access": proxy / OAuth / QR / update / restart); there is **no** UI-component tab — the mobile tweaks live on the **Plugins → dsh-pocket** card.
 
 ## 🚀 Getting started
 
@@ -172,15 +176,18 @@ Open `https://your-fixed-domain` on the phone → tap "**Sign in with Gitee**" (
 | The tunnel domain changed                            | Update the OAuth app callback URL **and** the settings allowlist, then re-save the setup page (re-binding required)                                                               |
 | After "Restart dsh web" the page says it runs in background | The new process is detached on purpose; stop it with `lsof -ti :3080 \| xargs kill -9` (macOS/Linux) or `netstat -ano \| findstr :3080` + `taskkill /PID <PID> /F` (Windows)  |
 | Stuck on 0.x                                         | `^0.x` can't jump to 1.x: update with `--latest` (`dsh plugin --profile web update dsh-pocket --latest -w`)                                                                        |
+| The **composer / plan / choice card disappears** on the phone | The official UI hides the composer once the connection enters `settling`/`error` (upstream behaviour). The **Weak-network transport** component forces it visible on narrow screens and adds a bottom connection bar plus session self-healing (turning that component off removes all of it) — tap **Reconnect now** instead of reloading. Plan/choice cards are driven by transient client state and can be lost after a weak-network blip (known upstream limitation) |
+| Phone opens slowly / reloads on every switch              | The first load downloads ~**475 KB gzip** of official JS/CSS; after that the `immutable` cache serves it from disk. Long histories are still re-read on reconnect (upstream has no resume cursor); the proxy only guarantees those responses are compressed to ~1 MB |
+| Frequent "connection lost" on a weak link / want to confirm the heartbeat override | Startup logs one line: `dsh-pocket-transport: typert-gateway override active — websocketHeartbeatIntervalMs=10000 …`. `override missing` means a higher-priority profile / home / overlay layer replaced that row (see ADR 0005 — only reconnect tolerance is lost). Offline check: `dsh --dump-config \| grep -A3 typert-gateway` |
 
 ## 💻 DSH Desktop
 
 - Live screen mirroring works in DSH Desktop; **updates/restarts are managed by the desktop app** (those two actions are disabled inside the plugin)
 - ⚠️ Desktop **advanced mode** does not support phone access yet (it disables the web layout, leaving the phone without a layout service → blank screen). Switch back to **compatibility** and restart; in advanced mode the phone shows an explicit notice overlay
 
-## 🗂 Architecture (one package, two client bundles)
+## 🗂 Architecture (one package, three client bundles)
 
-> Both `dsh.bundle` and `dsh.client` are **package-level** declarations. The Mobile Web UI is delivered as an **in-package subpackage** (`mobile/` = `dsh-pocket-mobile`) which declares `dsh.client` itself and ships its own browser half, so the panel card carries two independently switchable components and the mobile one has a **Configure** page. Delivery mechanism: `mobile/` is published with the root package via its `files` list, and **after installation** the root package's `postinstall` (`scripts/link-mobile-package.mjs`) creates `node_modules/dsh-pocket-mobile -> <package root>/mobile` inside the installed package — DSH resolves that row by looking for the package name under the package's own `node_modules`, so the link has to exist there.
+> Both `dsh.bundle` and `dsh.client` are **package-level** declarations. The two UI/transport components are delivered as **in-package subpackages** (`mobile/` = `dsh-pocket-mobile`, `transport/` = `dsh-pocket-transport`), each declaring `dsh.client` and shipping its own browser half, so the panel card carries three independently switchable components. Delivery mechanism: both directories are published with the root package via its `files` list, and **after installation** the root package's `postinstall` (`scripts/link-subpackages.mjs`) creates `node_modules/dsh-pocket-mobile -> <package root>/mobile` and `node_modules/dsh-pocket-transport -> <package root>/transport` inside the installed package — DSH resolves those rows by looking for the package name under the package's own `node_modules`, so the links have to exist there.
 >
 > ⚠️ On a GitHub install pnpm 11 blocks that `postinstall` first: the command fails once with `ERR_PNPM_IGNORED_BUILDS` — click **Allow these scripts and retry** on the plugin panel, then run the same `add` again (one time only). `dependencies`/`bundledDependencies` cannot replace it: pnpm resolves `file:./mobile` against the *profile* directory and fails the whole install, and any `node_modules/**` committed to the repo is dropped when the artifact is unpacked.
 
@@ -192,23 +199,26 @@ Open `https://your-fixed-domain` on the phone → tap "**Sign in with Gitee**" (
 | `lib/service.mjs`    | Service: proxy lifecycle (auto port fallback), status snapshot (OAuth view + a QR per allowlisted origin + LAN IP candidates)                                                    |
 | `lib/proxy.mjs`      | Header-rewriting reverse proxy: Host/Origin → loopback, transparent HTTP + WebSocket, polyfill injection, gzip/brotli, and the **auth gate** (loopback free / OAuth session otherwise, fail closed) plus `/pocket-oauth/*` and `/pocket-setup` routes |
 | `lib/rpc-route.js`   | RPC transport (used by `lib/web-rpc.js`): webserver mount / `rpc.handle` fallback / trust fence / 4xx-5xx branches (branch-for-branch with dsh-client-connection's `/api`); a future mobile host half can reuse it via `dsh-pocket/lib/rpc-route.js` |
-| `lib/settings.mjs`   | Settings persistence: proxy port → `$DSH_HOME/dsh-pocket/settings.json` (a legacy `mobileRightbarEnabled` orphan key is no longer read or written; a factory reset clears it)    |
+| `lib/settings.mjs`   | Settings persistence: proxy port → `$DSH_HOME/dsh-pocket/settings.json`; also exports `pocketDir()`, the single source of truth for the plugin data directory (OAuth credentials and the restart marker live under it) |
 | `lib/clipboard.mjs`  | Clipboard write (inlined into the client bundle at build time): `navigator.clipboard` with an `execCommand` fallback                                                              |
+| `lib/dom-contract.mjs` | The official Web UI's DOM contract (conversation root / session id / conversation scroller / turn nodes): the single source shared by both client components and the tests, so an upstream rename is a one-file change |
+| `lib/transport-hub.mjs` | Transport policy hub: the root row does `ctx.provide('pocketTransport', hub)`, the transport component registers its weak-network rules and unregisters them when the row is switched off; the proxy itself ships no optimisation rules |
 | `lib/web-rpc.js`     | Remote access loopback RPC (channel `/dsh-pocket`): `status` / `oauth.rotateSession` / `oauth.unbind` / `version` / `update` / `restart` / `pocket.reset`                          |
 | `client/`            | The **Remote access** client artifact (`dsh.client` → `client/client.js`): `index.jsx` only wires the "Phone access" settings tab and the `isLoopback` fallback; `api.js` holds its contract and helpers |
 | `mobile/`            | The **Mobile Web UI** subpackage `dsh-pocket-mobile`: `index.js` is a do-nothing host entry (all UI lives in the browser half), `locale/` supplies the panel row title/description, `package.json` declares the package identity and `dsh.client` |
+| `transport/`         | The **Weak-network transport** subpackage `dsh-pocket-transport`: `index.js` host half (registers the `/assets/**` cache policy and checks the composition patch), `cordis.patch.yml` heartbeat override, `client/` browser half, `test/netem.mjs` weak-network harness (not published) |
 | `mobile/client/styles.js` | The **single source** of the mobile stylesheets (CSS as JS string exports): `shellCss` frame/drawer geometry and the global-panel exit button, `settingsCss`, `composerCss`, `planCss`, `touchCss`. Deliberately not `.css` imports — the native `node --test` runner cannot import CSS |
 | `mobile/client/responsive-shell.js` | Viewport breakpoint (1024, matching the `ui-layout` sidebar auto-collapse point), style injection and prefs projection, drawer backdrop and idempotent open/close (reads the framework's `[data-sidebar-collapsed]` before deciding whether to call `toggleSidebar`), and auto-close that only recognises *navigation*: a session row being activated, or the main column's identity actually changing — expanding a Workspace or opening a `⋯` menu never closes the drawer |
 | `mobile/client/settings-adapter.js` | Settings dialog two-level navigation adapter: directory ↔ detail state, injected "back to settings" bar, gated by the stepped-navigation switch |
 | `mobile/client/index.jsx` | Plugin entry: registers the hamburger into `conversation.header.leading`, registers the global-panel exit button into `shell.overlay` (when a panel takes over the main column the conversation — and with it the hamburger — is not rendered at all, so this is the only way back on a phone), installs the two adapters above, registers the **Configure** page |
-| `scripts/link-mobile-package.mjs` | The root package's `postinstall`: creates `node_modules/dsh-pocket-mobile -> <package root>/mobile` inside the installed package (the subpackage's only delivery mechanism). A link it cannot create is reported as a warning, never a failure — the row is `required: false` and must not break the whole plugin install |
+| `scripts/link-subpackages.mjs` | The root package's `postinstall`: creates `node_modules/<subpackage> -> <package root>/<dir>` (`mobile/` and `transport/`, the subpackages' only delivery mechanism). A link it cannot create is reported as a warning, never a failure — the rows are `required: false` and must not break the whole plugin install |
 | `bin/dsh-pocket.mjs` | CLI: runs the same proxy and OAuth config standalone (`--port` / `--host`)                                                                                                      |
 
 ## 🛠 Development
 
 ```sh
 npm install
-npm run build:client    # rebuild both client bundles (client/client.js, mobile/client/client.js)
+npm run build:client    # rebuild all three client bundles (client/, mobile/, transport/)
 npm test                # proxy / OAuth / compression / handshake / service / RPC / settings / mobile UI / packaging
 ```
 

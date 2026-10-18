@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Weak-network transport",
+    "description": "Immutable caching for the official assets, session self-healing and a connection banner; turn it off for stock behaviour."
+  }
+}

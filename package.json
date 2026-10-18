@@ -19,6 +19,7 @@
     "lib",
     "client",
     "mobile",
+    "transport",
     "scripts",
     "cordis.patch.yml",
     "README.md",
@@ -26,7 +27,7 @@
   ],
   "scripts": {
     "build:client": "node client/build.mjs",
-    "postinstall": "node scripts/link-mobile-package.mjs",
+    "postinstall": "node scripts/link-subpackages.mjs",
     "pretest": "npm run build:client",
     "release": "semantic-release",
     "test": "node --test --test-timeout=30000 \"test/*.test.js\""
@@ -43,7 +44,8 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "dsh-pocket-mobile": "file:./mobile"
+    "dsh-pocket-mobile": "file:./mobile",
+    "dsh-pocket-transport": "file:./transport"
   },
   "engines": {
     "node": ">=22"
@@ -65,7 +67,10 @@
   ],
   "dsh": {
     "bundle": {
-      "patch": "./cordis.patch.yml"
+      "patch": [
+        "./cordis.patch.yml",
+        "./transport/cordis.patch.yml"
+      ]
     },
     "client": {
       "inject": [

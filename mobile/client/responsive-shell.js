@@ -15,6 +15,10 @@
  */
 
 import { shellCss, settingsCss, composerCss, planCss, touchCss } from './styles.js';
+import {
+  CONVERSATION_MARKER_SELECTOR,
+  CONVERSATION_SESSION_ATTR,
+} from '../../lib/dom-contract.mjs';
 
 /** 与 dsh-client-ui-layout 的 SIDEBAR_AUTO_COLLAPSE 对齐。 */
 export const MOBILE_BREAKPOINT = 1024;
@@ -61,10 +65,8 @@ export const AUTO_CLOSE_DEDUPE_MS = 240;
 const CENTER_COL_SELECTOR = '.pI_x6G_centerCol';
 /** 主栏 `main` 槽的锚点（display:contents，只在 DOM 里占位可寻址）。 */
 export const MAIN_ANCHOR_SELECTOR = '[data-slot="main"]';
-/** 会话根元素：恒在（空会话也渲染），但只有绑定了会话时才有下面的 id 属性。 */
-export const CONVERSATION_MARKER_SELECTOR = '[data-conversation-content]';
-/** 会话根携带的会话 id 属性。 */
-export const CONVERSATION_SESSION_ATTR = 'data-conversation-session';
+/** 会话根与 id 属性的 DOM 契约在 lib/dom-contract.mjs 统一维护，这里转出给本包与测试使用。 */
+export { CONVERSATION_MARKER_SELECTOR, CONVERSATION_SESSION_ATTR };
 
 /** 当前生效的配置（模块级单例，供样式注入与设置适配器共享）。 */
 let currentPrefs = { ...DEFAULT_PREFS };

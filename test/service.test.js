@@ -580,3 +580,17 @@ Ethernet adapter WLAN:
     else process.env.WSLENV = prevWslEnv;
   }
 });
+
+// ---------- 排障上下文 ----------
+
+test('排障上下文：描述官方界面 + 静态资源强缓存，且不泄露任何凭据', async () => {
+  const { buildTroubleshootingContext, redactStatus } = await import('../client/api.js');
+  const status = redactStatus({
+    proxyRunning: true, proxyPort: 3081, dshPort: 3080,
+    oauth: { provider: 'gitee', configured: true, bound: true, boundLogin: 'alice', callbackOrigins: [] },
+  });
+  const md = buildTroubleshootingContext(status, { version: { current: '2.10.6', loaded: '2.10.6' }, ua: 'UA/1' });
+  assert.ok(md.includes('immutable'), '说明静态资源强缓存这条真实增益');
+  assert.ok(md.includes('官方 Web UI'), '说明手机打开的就是官方界面');
+  assert.ok(!md.includes('secret'), '不泄露任何凭据');
+});

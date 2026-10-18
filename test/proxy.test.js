@@ -8,6 +8,18 @@ import { connect } from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
 
 import { createPocketProxy, createHandshakeTracker } from '../lib/proxy.mjs';
+import { createTransportHub } from '../lib/transport-hub.mjs';
+import { assetCachePolicy } from '../transport/index.js';
+
+/**
+ * 传输策略枢纽 + 已注册的 /assets/** 策略 = dsh-pocket-transport 组件启用时的代理视角。
+ * 代理本身不内置任何弱网规则，规则必须由组件注册进来。
+ */
+function transportOn() {
+  const hub = createTransportHub();
+  hub.register(assetCachePolicy);
+  return hub;
+}
 
 /** 构造一个带掩码的 WS 文本帧（浏览器在握手后立即发的首帧，会进 upgrade 的 head）。 */
 function maskedTextFrame(text) {
@@ -848,4 +860,145 @@ test('createHandshakeTracker：窗口内累计、clear 清零、过期重新计�
   t.record('8.8.8.8', now);
   t.prune(now + 5000);
   assert.equal(t.exhausted('8.8.8.8'), false, '过期条目被清掉');
+});
+
+// ---------- 官方静态资源强缓存（策略由弱网传输组件注册） ----------
+
+/** 假上游：模拟 dsh web 的静态产物（已 gzip 的 JS / 未压缩 JS / JSON / HTML）。 */
+async function assetUpstream() {
+  const { gzipSync } = await import('node:zlib');
+  const js = 'export const x = 1;\n'.repeat(120);
+  const gz = gzipSync(Buffer.from(js));
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? '/', 'http://x').pathname;
+    if (url === '/assets/gzipped.js') {
+      res.writeHead(200, {
+        'content-type': 'text/javascript; charset=utf-8',
+        'content-encoding': 'gzip',
+        vary: 'Accept-Encoding',
+        'content-length': String(gz.length),
+      });
+      res.end(gz);
+      return;
+    }
+    if (url === '/assets/nostore.js') {
+      // 上游明确说了 no-store 的资源：代理只"补缺失的头"，不能顶掉上游语义。
+      res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(js);
+      return;
+    }
+    if (url.startsWith('/assets/')) {
+      res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' });
+      res.end(js);
+      return;
+    }
+    if (url === '/assets-missing.js') {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('not found');
+      return;
+    }
+    if (url.startsWith('/api/')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end('<html><head></head><body>ok</body></html>');
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  return { port: server.address().port, server, js };
+}
+
+test('传输组件开关：注册了策略才补 immutable，没有策略就是官方原生行为', async () => {
+  const up = await assetUpstream();
+  const off = await createPocketProxy({ port: 0, host: '127.0.0.1', upstream: { host: '127.0.0.1', port: up.port } });
+  const on = await createPocketProxy({ port: 0, host: '127.0.0.1', upstream: { host: '127.0.0.1', port: up.port }, transport: transportOn() });
+  try {
+    const without = await fetch(`http://127.0.0.1:${off.port}/assets/gzipped.js`, { headers: { 'accept-encoding': 'identity' } });
+    assert.equal(without.headers.get('cache-control'), null, '组件关掉时不补任何缓存头');
+
+    const withPolicy = await fetch(`http://127.0.0.1:${on.port}/assets/gzipped.js`, { headers: { 'accept-encoding': 'identity' } });
+    assert.equal(withPolicy.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+  } finally {
+    await off.close();
+    await on.close();
+    await new Promise((r) => up.server.close(r));
+  }
+});
+
+test('端到端：/assets/** 补 immutable（上游已 gzip 的透传分支），内容不被破坏', async () => {
+  const up = await assetUpstream();
+  const proxy = await createPocketProxy({ port: 0, host: '127.0.0.1', upstream: { host: '127.0.0.1', port: up.port }, transport: transportOn() });
+  try {
+    const res = await fetch(`http://127.0.0.1:${proxy.port}/assets/gzipped.js`, { headers: { 'accept-encoding': 'gzip, br' } });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+    assert.match(await res.text(), /export const x = 1/, '解压后内容一致（未被二次压缩/损坏）');
+  } finally {
+    await proxy.close();
+    await new Promise((r) => up.server.close(r));
+  }
+});
+
+test('端到端：/assets/** 未压缩时走压缩分支也必须带上 immutable', async () => {
+  const up = await assetUpstream();
+  const proxy = await createPocketProxy({ port: 0, host: '127.0.0.1', upstream: { host: '127.0.0.1', port: up.port }, transport: transportOn() });
+  try {
+    const res = await fetch(`http://127.0.0.1:${proxy.port}/assets/index-plain.js`, { headers: { 'accept-encoding': 'gzip' } });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'public, max-age=31536000, immutable', '压缩分支同样带缓存头');
+    assert.equal(res.headers.get('content-encoding'), 'gzip', '走的是代理压缩分支');
+    assert.match(await res.text(), /export const x = 1/);
+  } finally {
+    await proxy.close();
+    await new Promise((r) => up.server.close(r));
+  }
+});
+
+test('端到端：HTML 仍 no-store、API 不加缓存头、非 200 不加缓存头', async () => {
+  const up = await assetUpstream();
+  const proxy = await createPocketProxy({ port: 0, host: '127.0.0.1', upstream: { host: '127.0.0.1', port: up.port }, transport: transportOn() });
+  try {
+    const html = await fetch(`http://127.0.0.1:${proxy.port}/`, { headers: { accept: 'text/html' } });
+    assert.equal(html.headers.get('cache-control'), 'no-store', '注入过补丁的文档必须每次重新取（版本锚点）');
+
+    const api = await fetch(`http://127.0.0.1:${proxy.port}/api/x`, { headers: { accept: 'application/json' } });
+    assert.equal(api.headers.get('cache-control'), null, 'API 响应不设缓存头');
+
+    const missing = await fetch(`http://127.0.0.1:${proxy.port}/assets-missing.js`);
+    assert.equal(missing.status, 404);
+    assert.equal(missing.headers.get('cache-control'), null, '404 不设强缓存');
+  } finally {
+    await proxy.close();
+    await new Promise((r) => up.server.close(r));
+  }
+});
+
+// ---------- 缓存头不变量：协商响应必须带 Vary、上游语义不被顶掉 ----------
+
+test('端到端：代理现场重编码（压缩分支）必须带 Vary: Accept-Encoding', async () => {
+  const up = await assetUpstream();
+  const proxy = await createPocketProxy({ port: 0, host: '127.0.0.1', upstream: { host: '127.0.0.1', port: up.port }, transport: transportOn() });
+  try {
+    const res = await fetch(`http://127.0.0.1:${proxy.port}/assets/index-plain.js`, { headers: { 'accept-encoding': 'gzip' } });
+    assert.equal(res.headers.get('content-encoding'), 'gzip', '前置：走的确实是代理自己的压缩分支');
+    assert.match(res.headers.get('vary') ?? '', /accept-encoding/i,
+      '协商出来的响应体必须声明 Vary，否则共享缓存会把 gzip/br 变体回放给不支持该编码的客户端');
+  } finally {
+    await proxy.close();
+    await new Promise((r) => up.server.close(r));
+  }
+});
+
+test('端到端：上游自己的 cache-control 不被 immutable 顶掉（只补缺失的头）', async () => {
+  const up = await assetUpstream();
+  const proxy = await createPocketProxy({ port: 0, host: '127.0.0.1', upstream: { host: '127.0.0.1', port: up.port }, transport: transportOn() });
+  try {
+    const res = await fetch(`http://127.0.0.1:${proxy.port}/assets/nostore.js`, { headers: { 'accept-encoding': 'identity' } });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'no-store', '上游明确说了 no-store 就不能被改写');
+  } finally {
+    await proxy.close();
+    await new Promise((r) => up.server.close(r));
+  }
 });

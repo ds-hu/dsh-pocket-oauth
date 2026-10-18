@@ -1,8 +1,9 @@
 # 仓库里不再提交任何 node_modules 内容。
 #
-# 手机端子包 dsh-pocket-mobile 的交付方式（详见 scripts/link-mobile-package.mjs）：
-#   mobile/                              子包源码，随 package.json 的 files 一起发布
-#   postinstall 在安装物里建出           node_modules/dsh-pocket-mobile -> <包根>/mobile
+# 两个子包（dsh-pocket-mobile / dsh-pocket-transport）的交付方式
+# （详见 scripts/link-subpackages.mjs）：
+#   mobile/、transport/                  子包源码，随 package.json 的 files 一起发布
+#   postinstall 在安装物里建出           node_modules/<子包名> -> <包根>/<子包目录>
 #
 # 提交 node_modules/ 里的软链曾经是交付手段，但它在安装态必然失效（pnpm 解包 git 包时会
 # 丢掉 node_modules/**），所以那两条 negation 已删除，node_modules 一律忽略。

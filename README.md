@@ -51,23 +51,27 @@ DSH Pocket 就是干这个的：**只暴露一个端口，登录一次 Gitee / G
 | 🧾 排障上下文       | 设置页「复制排障上下文」一键生成含使用目标、架构与认证模型、当前状态快照的文本（已脱敏），粘贴给任意 AI 即可让它接手排查                                          |
 | ⚡ 实时同步         | 流式输出走 WebSocket 全透传——**电脑上在输出，手机上同步在滚**，可双向操作；内置心跳保活（防 NAT/省电机制静默断链，断线自动重连）                                 |
 | 🗜️ 传输压缩         | 大 JSON 响应自动 gzip/brotli（长会话 17MB → ~1MB，brotli 质量 6：快且省流量），手机加载更快、更省流量                                                            |
-| 🧩 零额外服务       | 一个 npm 包（远程操控 + 手机端 WebUI 组件）；不需要自建服务器或中继（登录用你自己的 Gitee / GitHub 账号）                                                        |
+| 🧩 零额外服务       | 一个 npm 包（远程操控 + 手机端 WebUI + 弱网传输优化 三个组件）；不需要自建服务器或中继（登录用你自己的 Gitee / GitHub 账号）                                                        |
 | 📱 手机端界面       | 手机打开就是电脑上的官方界面（同一个 `dsh web`、实时同屏），并自动套用窄屏优化：抽屉式侧边栏、设置两级导航、触屏输入框、Plan 审阅卡片                                        |
+| ⚡ 静态资源强缓存   | 官方前端的 `/assets/**` 是内容哈希产物，**弱网传输优化**组件让代理给它补 `immutable` 一年强缓存（HTML 仍 `no-store`）：首屏约 475 KB gzip 的 JS/CSS **第二次打开不再重复下载**，弱网下最直接的体感提升 |
 
-### 🧩 两个可独立开关的组件
+### 🧩 三个可独立开关的组件
 
-一个包里装了两个组件，安装/更新仍然只有一条命令；组件在 **侧边栏 → 插件 → dsh-pocket** 卡片里各自有一个开关：
+一个包里装了三个组件，安装/更新仍然只有一条命令；组件在 **侧边栏 → 插件 → dsh-pocket** 卡片里各自有一个开关：
 
-| 组件                                | 负责                                                | 关掉之后                                                                 |
-| ----------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------ |
-| `dsh-pocket`（远程操控）            | 单端口代理、Gitee/GitHub OAuth、地址二维码、更新/重启 | 代理不再监听（3081 关闭）、无「手机访问」设置区；手机照样能打开官方界面（局域网/隧道直连本机 dsh web） |
-| `dsh-pocket-mobile`（手机端 WebUI） | 窄屏（< 1024px）自动生效：抽屉式左侧栏、全局面板返回键、两级设置导航、触屏输入框、Plan / 审批卡片 | 手机打开就是官方桌面排版（侧栏被挤成 56px 图标条、设置页左右并排挤压） |
+| 组件                                    | 负责                                                | 关掉之后                                                                 |
+| --------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------ |
+| `dsh-pocket`（远程操控）                | 单端口代理、Gitee/GitHub OAuth、地址二维码、更新/重启 | 代理不再监听（3081 关闭）、无「手机访问」设置区；手机照样能打开官方界面（局域网/隧道直连本机 dsh web） |
+| `dsh-pocket-mobile`（手机端 WebUI）     | 窄屏（< 1024px）自动生效：抽屉式左侧栏、全局面板返回键、两级设置导航、触屏输入框、Plan / 审批卡片 | 手机打开就是官方桌面排版（侧栏被挤成 56px 图标条、设置页左右并排挤压） |
+| `dsh-pocket-transport`（弱网传输优化）  | 官方静态产物 immutable 强缓存、会话自愈（流中断/卡死自动重连）、底部连接状态条、「settling 态输入框不消失」 | 回到官方原生行为：每次冷开重新下载官方前端资源、流中断后需手动刷新页面、没有状态条；移动端排版不受影响 |
 
-> **手机端 WebUI 现在带客户端产物**：子包 `dsh-pocket-mobile`（源码在 `mobile/`，随包一起安装）声明了 `dsh.client`，客户端半边由 `client/build.mjs` 打包成 `mobile/client/client.js`，面板里那条 row 因此有「配置」页，可以关掉遮罩、输入框优化与设置分步导航。
+> **两个子包都带客户端产物**：`dsh-pocket-mobile`（源码在 `mobile/`）与 `dsh-pocket-transport`（源码在 `transport/`）随包一起安装，各自声明 `dsh.client`，客户端半边由 `client/build.mjs` 打包成 `<子包>/client/client.js`；手机端那条 row 因此有「配置」页（遮罩 / 输入框优化 / 设置分步导航），传输优化那条 row 只有开关。
 >
 > 开关写在 profile 的 `cordis.patch.yml`（DSH 原生机制）：**宿主半边即时停/启**；客户端产物的进出在下一次页面加载时生效，切完开关刷新一下页面即可。
+>
+> 弱网传输优化里还有一条**组合补丁**（`transport/cordis.patch.yml`：网关 WebSocket 心跳 2000 → 10000 ms、流收件箱 1 MiB，见 ADR 0005）。它在 Loader 组合阶段生效，随包安装始终存在，不随这条 row 的开关切换；row 的开关控制的是缓存策略、会话自愈与状态条。
 
-设置里只有远程操控的「手机访问」（代理 / OAuth / 二维码 / 更新 / 重启），**没有**手机端界面相关的独立页；移动端微调在「插件 → dsh-pocket 卡片」里。
+设置里只有远程操控的「手机访问」（代理 / OAuth / 二维码 / 更新 / 重启），**没有**界面组件相关的独立页；移动端微调在「插件 → dsh-pocket 卡片」里。
 
 ## 🚀 怎么用
 
@@ -169,6 +173,9 @@ npx @deepseek-ai/dsh web
 | 手机打开一直回到登录页                                   | 浏览器没保存会话 cookie（Safari 在 `http://` + 纯 IP 上会丢 cookie，issue #91 有专门提示页）。换 Chromium 系浏览器，或改用 `https://` 隧道域名                                            |
 | 重启电脑后要重新登录                                     | 会话绑定 dsh web 进程（进程级随机密钥），**这是刻意设计**：进程重启即旧会话全部失效                                                                                                                                 |
 | 隧道域名变了                                             | OAuth 应用回调地址 + 设置页白名单两处都改，然后重开初始化页保存（需重新绑定）                                                                                                           |
+| 手机上**输入框 / 计划 / 选择卡片消失**                     | 官方界面在连接进入 `settling`/`error` 后会隐藏输入区（上游行为）。**弱网传输优化**组件已在窄屏下强制输入区常驻，并加了底部连接状态条 + 会话自愈（该组件被关掉时这些能力一并消失）；仍出现就点状态条里的「立即重连」，不要刷新整页。计划/选择卡片由客户端瞬时状态驱动，弱网闪断后可能丢，属已知上游限制 |
+| 手机打开很慢 / 每次切回来都重新加载                        | 首次要下官方前端约 **475 KB gzip** 的 JS/CSS；之后走 `immutable` 强缓存，不再重复下载。长会话历史仍会在重连时整段重读（上游没有续传游标），代理只保证这些响应被压缩到 ~1 MB |
+| 弱网下频繁「连接已断开」/ 想确认心跳放宽是否生效           | 插件启动日志里会有一条 `dsh-pocket-transport: typert-gateway override active — websocketHeartbeatIntervalMs=10000 …`；若显示 `override missing`，说明该行被更高优先级的 profile / home / overlay 层顶掉了（见 ADR 0005，只损失重连容忍度）。离线核对：`dsh --dump-config \| grep -A3 typert-gateway` |
 | 点「重启 dsh web」后页面提示进程在后台运行                | 自重启的新进程是 detached 后台进程（不挂终端），是页内更新的标准做法；停止它：macOS/Linux `lsof -ti :3080 \| xargs kill -9`；Windows `netstat -ano \| findstr :3080` → `taskkill /PID <PID> /F` |
 | 想手动更新到最新版                                        | 重新安装一次并重启：`dsh plugin --profile web add github:cup113/dsh-pocket-oauth -w`（pnpm 会把版本 pin 到当时的 main 提交）；本地 clone 软链安装则 `git pull` 后重启 `dsh web`                                |
 
@@ -177,9 +184,9 @@ npx @deepseek-ai/dsh web
 - 桌面版里 dsh-pocket 的**实时同屏**正常可用；**更新/重启由桌面版管理**（插件内这两项自动停用）
 - ⚠️ 桌面端 **advanced 模式**暂不支持手机访问（该模式禁用网页布局、手机拿不到 layout 服务，会白屏）——请切回 **compatibility** 模式后重启；advanced 模式下手机打开会看到明确的提示层
 
-## 🗂 架构（一个 npm 包、两份客户端产物）
+## 🗂 架构（一个 npm 包、三份客户端产物）
 
-> `dsh.bundle` 与 `dsh.client` 都是**包级**声明。手机端 WebUI 以**包内子包**形式交付（`mobile/` = `dsh-pocket-mobile`），它自己声明 `dsh.client` 并提供客户端产物，因此面板里那张卡片有两个可分别开关的组件、手机端组件也有自己的「配置」页。子包的交付机制：`mobile/` 随根包 `package.json` 的 `files` 一起发布，**装完之后**由根包的 `postinstall`（`scripts/link-mobile-package.mjs`）在包内建出 `node_modules/dsh-pocket-mobile -> <包根>/mobile` 链接——DSH 解析那条 row 时只在包内 `node_modules` 里找这个包名，所以链接必须存在。
+> `dsh.bundle` 与 `dsh.client` 都是**包级**声明。两个界面/传输组件以**包内子包**形式交付（`mobile/` = `dsh-pocket-mobile`、`transport/` = `dsh-pocket-transport`），各自声明 `dsh.client` 并提供客户端产物，因此面板里那张卡片有三个可分别开关的组件。子包的交付机制：两个目录都随根包 `package.json` 的 `files` 一起发布，**装完之后**由根包的 `postinstall`（`scripts/link-subpackages.mjs`）在包内建出 `node_modules/dsh-pocket-mobile -> <包根>/mobile` 与 `node_modules/dsh-pocket-transport -> <包根>/transport` 两条链接——DSH 解析那两条 row 时只在包内 `node_modules` 里找这两个包名，所以链接必须存在。
 >
 > ⚠️ 从 GitHub 安装时，pnpm 11 会先拦下这个 `postinstall`：命令以 `ERR_PNPM_IGNORED_BUILDS` 失败一次，在**插件面板**点「允许这些脚本并重试」后再跑一次 add 即可（只需一次）。不能改用 `dependencies`/`bundledDependencies`：pnpm 会把 `file:./mobile` 相对 profile 目录解析而直接让安装失败，仓库里提交的 `node_modules/**` 也会在解包时被丢掉。
 
@@ -191,23 +198,26 @@ npx @deepseek-ai/dsh web
 | `lib/service.mjs`                  | 服务：代理生命周期（端口自适应）、状态快照（OAuth 视图 + 每条白名单地址的二维码 + 局域网 IP 候选）                                                        |
 | `lib/proxy.mjs`                    | 改头反向代理：Host/Origin → loopback，HTTP + WebSocket 透传 + polyfill 注入 + gzip/brotli 压缩 + **认证门**（loopback 免认证 / 其余要 OAuth 会话，fail closed）+ `/pocket-oauth/*`、`/pocket-setup` 路由 |
 | `lib/rpc-route.js`                 | RPC 传输层（`lib/web-rpc.js` 用）：webServer 挂载 / `rpc.handle` 回退 / 信任栅栏 / 4xx-5xx 分支（与 dsh-client-connection 的 `/api` 逐分支对齐）；将来移动端宿主半边可经 `dsh-pocket/lib/rpc-route.js` 复用 |
-| `lib/settings.mjs`                 | 设置持久化：代理端口 → `$DSH_HOME/dsh-pocket/settings.json`（旧版遗留的 `mobileRightbarEnabled` 孤儿键不再读写，随「恢复出厂设置」清除）                    |
+| `lib/settings.mjs`                 | 设置持久化：代理端口 → `$DSH_HOME/dsh-pocket/settings.json`；同时导出插件数据目录的唯一事实源 `pocketDir()`（OAuth 凭据、重启标记都在它下面）                    |
 | `lib/clipboard.mjs`                | 剪贴板写入（构建时内联进客户端产物）：`navigator.clipboard` + `execCommand` 兜底                                                                          |
+| `lib/dom-contract.mjs`             | 官方 Web UI 的 DOM 契约（会话根 / 会话 id / 对话滚动容器 / 回合节点）：两个客户端组件与测试共用的唯一来源，上游改名只改这一处                                        |
+| `lib/transport-hub.mjs`            | 传输策略枢纽：根行 `ctx.provide('pocketTransport', hub)`，弱网优化规则由传输组件注册、行关掉即撤销；代理不内置任何优化规则                                          |
 | `lib/web-rpc.js`                   | 远程操控的 loopback RPC（通道 `/dsh-pocket`）：`status` / `oauth.rotateSession` / `oauth.unbind` / `version` / `update` / `restart` / `pocket.reset`        |
 | `client/`                          | **远程操控**的客户端产物（`dsh.client` → `client/client.js`）：`index.jsx` 只启用设置页「手机访问」+ `isLoopback` 兜底；`api.js` 为它的契约与工具         |
 | `mobile/`                          | **手机端 WebUI** 子包 `dsh-pocket-mobile`：`index.js` 是空壳宿主入口（界面能力全在客户端半边），`locale/` 提供面板行的标题与描述，`package.json` 声明包身份与 `dsh.client` |
+| `transport/`                       | **弱网传输优化**子包 `dsh-pocket-transport`：`index.js` 宿主半边（注册 `/assets/**` 强缓存策略 + 组合补丁生效自检）、`cordis.patch.yml` 网关心跳放宽、`client/` 客户端半边、`test/netem.mjs` 弱网复现装置（不随包发布） |
 | `mobile/client/styles.js`          | 移动端样式的**唯一来源**（纯 JS 导出的 CSS 字符串）：`shellCss` 帧/抽屉几何与面板返回键、`settingsCss`、`composerCss`、`planCss`、`touchCss`。刻意不做 `.css` 文件导入——原生 `node --test` 无法 import CSS |
 | `mobile/client/responsive-shell.js` | 视口断点（1024，与 `ui-layout` 的侧边栏自动折叠断点一致）、样式注入与配置投影、抽屉遮罩与幂等开合（只读框架的 `[data-sidebar-collapsed]` 再决定是否调 `toggleSidebar`）、自动收起只认「导航」：会话行被激活或主栏身份真的变了才收起，展开工作区、开 `⋯` 菜单都不收起 |
 | `mobile/client/settings-adapter.js` | 设置弹窗两级导航转接器：目录 ↔ 详情状态属性、注入「返回设置」、受「分步导航」开关控制                                                                    |
 | `mobile/client/index.jsx`          | 插件入口：注册汉堡按钮到 `conversation.header.leading` 槽位、注册全局面板返回键到 `shell.overlay` 槽位（面板接管主栏时会话连同 header 一起不渲染，汉堡按钮随之消失，这是手机上唯一的回会话入口）、装配上面两个适配器、注册「配置」页 |
-| `scripts/link-mobile-package.mjs`  | 根包 `postinstall`：在安装物里建出 `node_modules/dsh-pocket-mobile -> <包根>/mobile`（子包唯一的交付机制）。链接建不出来时只告警不失败——row 是 `required: false`，不该因此弄挂整个插件的安装                              |
+| `scripts/link-subpackages.mjs`     | 根包 `postinstall`：在安装物里建出 `node_modules/<子包名> -> <包根>/<子包目录>`（`mobile/` 与 `transport/`，子包唯一的交付机制）。链接建不出来时只告警不失败——row 是 `required: false`，不该因此弄挂整个插件的安装                              |
 | `bin/dsh-pocket.mjs`               | CLI：独立跑同一套代理与 OAuth 配置（`--port` / `--host`）                                                                                                 |
 
 ## 🛠 开发
 
 ```sh
 npm install
-npm run build:client    # 重新打包两份客户端产物（client/client.js、mobile/client/client.js）
+npm run build:client    # 重新打包三份客户端产物（client/client.js、mobile/client/client.js、transport/client/client.js）
 npm test                # 代理 / OAuth / 压缩 / 握手 / 服务 / RPC / 设置 / 手机端界面 / 打包结构
 ```
 

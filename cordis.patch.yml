@@ -1,34 +1,46 @@
 # dsh-pocket bundle patch（dsh.bundle manifest 要求的加载配置）
 #
-# 单包两条 Loader row，在插件面板里各有一个独立开关：
-#   - dsh-pocket         远程操控：单端口代理 + Gitee/GitHub OAuth + 设置页「手机访问」
-#   - dsh-pocket-mobile  手机端 WebUI：窄屏（< 1024px）自动生效的抽屉侧边栏、全局面板返回键、
-#                        两级设置导航、触屏输入框、Plan / 审批卡片（也可以整条关掉）
+# 一个 bundle 三条 Loader row，在插件面板里各有一个独立开关：
+#   - dsh-pocket            远程操控：单端口代理 + Gitee/GitHub OAuth + 设置页「手机访问」
+#   - dsh-pocket-mobile     手机端 WebUI：窄屏（< 1024px）自动生效的抽屉侧边栏、全局面板返回键、
+#                           两级设置导航、触屏输入框、Plan / 审批卡片
+#   - dsh-pocket-transport  弱网传输优化：官方静态产物 immutable 强缓存 + 会话自愈 / 连接状态条
 #
-# 为什么第二条 row 必须是**另一个包**（而不是 dsh-pocket/mobile 这种子路径名）：
+# 为什么后两条必须是**另一个包**（而不是 dsh-pocket/mobile 这种子路径名）：
 #   - 行名要能被解析成包：子路径名（含 `/`）不是裸包名，面板拿不到元数据、Loader 也解析不到；
-#   - 行名指向根包 dsh-pocket 会让两条 row 同名（DSH 会报 resolves from multiple Loader sources）。
-# 所以手机端组件按包内子包交付：
+#   - 行名指向根包 dsh-pocket 会让多条 row 同名（DSH 会报 resolves from multiple Loader sources）。
+# 所以两个界面/传输组件都按包内子包交付：
 #
 #   mobile/                                子包 dsh-pocket-mobile（空壳宿主入口 index.js + locale 元数据
 #                                          + 自己的 dsh.client 客户端半边 client/client.js），随根包
 #                                          package.json 的 files 一起发布
-#   node_modules/dsh-pocket-mobile         → <包根>/mobile 的链接，由根包 postinstall
-#                                          （scripts/link-mobile-package.mjs）在**安装物内部**建出来
-#   package.json                           **不**声明 dsh-pocket-mobile 依赖：git 安装时 pnpm 会把
+#   transport/                             子包 dsh-pocket-transport（宿主半边 index.js 注册传输策略
+#                                          + 自己的 dsh.client 客户端半边 + 组合补丁 cordis.patch.yml）
+#   node_modules/dsh-pocket-mobile         → <包根>/mobile 的链接
+#   node_modules/dsh-pocket-transport      → <包根>/transport 的链接
+#                                          两条链接都由根包 postinstall
+#                                          （scripts/link-subpackages.mjs）在**安装物内部**建出来
+#   package.json                           **不**声明这两个子包为 dependencies：git 安装时 pnpm 会把
 #                                          "file:./mobile" 相对 profile 目录解析而失败；bundledDependencies
 #                                          与提交软链同样到不了安装态（pnpm 解包时丢掉 node_modules/**）。
 #                                          postinstall 是唯一能在那之后把子包落进包内 node_modules 的机制；
 #                                          pnpm 11 会先拦下它，需在插件面板「允许这些脚本并重试」放行。
 #
-# 子包 manifest 自己声明 dsh.client，DSH 因此把它当客户端包：那条 row 有自己的「配置」页
-# （遮罩 / 输入框优化 / 设置分步导航三个开关）。客户端产物由 client/build.mjs 的第二个
-# TARGETS 目标打包，源码在 mobile/client/。
+# 两个子包 manifest 各自声明 dsh.client，DSH 因此把它们当客户端包：手机端那条 row 有自己的
+# 「配置」页（遮罩 / 输入框优化 / 设置分步导航三个开关）。客户端产物由 client/build.mjs 的
+# TARGETS 目标打包，源码分别在 mobile/client/ 与 transport/client/。
 #
-# 两条 row 的名字都是**裸包名**，所以开关覆盖在插件升级后依然稳定生效（id/name 从未变过）。
+# 三条 row 的名字都是**裸包名**，所以开关覆盖在插件升级后依然稳定生效（id/name 从未变过）。
+#
+# 弱网组合补丁（心跳放宽 / 流收件箱）在 transport/cordis.patch.yml：它由根包
+# package.json 的 `dsh.bundle.patch` 列表一起引入，属于传输优化组件的交付内容。
+
 - insert:
     - id: dsh-pocket
       name: dsh-pocket
 
     - id: dsh-pocket-mobile
       name: dsh-pocket-mobile
+
+    - id: dsh-pocket-transport
+      name: dsh-pocket-transport

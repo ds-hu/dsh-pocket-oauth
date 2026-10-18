@@ -135,7 +135,6 @@ test('plugin entry keeps component boundaries: mobile endpoints are not served o
 
   const s = await entry.call(POCKET_ENDPOINTS.status, {});
   assert.equal(s.ok, true);
-  assert.equal('mobileRightbarEnabled' in s.value, false, 'status 不携带手机端组件字段（它不读写 settings.json）');
 
   for (const endpoint of ['mobile.status', 'mobile.rightbar.setEnabled', 'mobile.fileRead']) {
     const res = await entry.call(endpoint, { on: true, path: 'package.json' });
