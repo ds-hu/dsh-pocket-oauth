@@ -25,10 +25,11 @@
 # （遮罩 / 输入框优化 / 设置分步导航三个开关）。客户端产物由 client/build.mjs 的第二个
 # TARGETS 目标打包，源码在 mobile/client/。
 #
-# 两条 row 的名字都是**裸包名**，所以开关覆盖在插件升级后依然稳定生效（id/name 从未变过）。
+# 两条 row 的 id 稳定不变，所以开关覆盖在插件升级后依然生效：根组件用带作用域的包名
+# （npm 组织 ds-hu 下的 @ds-hu/dsh-pocket），手机端仍用包内子包的裸包名。
 - insert:
     - id: dsh-pocket
-      name: dsh-pocket
+      name: "@ds-hu/dsh-pocket"
 
     - id: dsh-pocket-mobile
       name: dsh-pocket-mobile

@@ -84,19 +84,28 @@ npm install -g @deepseek-ai/dsh     # 全局安装；验证：dsh --version
 # 不想全局装？每次命令前加 npx：npx @deepseek-ai/dsh <命令>
 ```
 
+**方式一：一行命令安装（npm 源）**
+
 ```sh
-# 1. 安装本仓库（从 GitHub 拉取；包名是 dsh-pocket，仓库名是 dsh-pocket-oauth）
-dsh plugin --profile web add github:cup113/dsh-pocket-oauth -w
+dsh plugin --profile web add @ds-hu/dsh-pocket -w --registry=https://registry.npmjs.org/
 #    ↑ 首次会以 ERR_PNPM_IGNORED_BUILDS 失败一次：手机端子包靠根包 postinstall 建链接，
 #      而 pnpm 11 默认拦下依赖脚本。在插件面板点「允许这些脚本并重试」后，重跑这条命令即可（只需一次）。
 
-# 2. 重启 dsh web
+# 安装完重启 dsh web
 npx @deepseek-ai/dsh web
 ```
 
-> ℹ️ npm 上的 `dsh-pocket` 是**原版**（PIN 模型，不是本仓库）——**不要**用 `dsh plugin add dsh-pocket`，那装到的是原版。本仓库只从 GitHub 安装。
-> ⚠️ **已经装过旧版的用户**：`github:` 规格会把版本 pin 在当时的 main 提交上，光重启不会升级。要拿到修好的手机端子包，必须重新执行一次上面的 `add` 命令（并按提示允许一次构建脚本）。
-> 🔄 设置页的「一键更新」会先探测安装方式再选择正确动作：`github:` 规格安装重跑一次 add（重新 pin 最新 main 提交）；本地 clone 软链（开发方式，见 [LOCAL-DEV.md](./LOCAL-DEV.md)）执行 `git pull --ff-only`。完成后自动重启生效。
+**方式二：在 DSH WebUI 插件页安装**
+
+1. 打开 `dsh web` → **设置 → 插件**；
+2. 点 **「添加插件」**，安装源选 **「npm 官方源」**（`https://registry.npmjs.org/`）；
+3. 输入包名 `@ds-hu/dsh-pocket`，点 **「安装」**；
+4. 若提示 `ERR_PNPM_IGNORED_BUILDS` / 构建脚本被拦，点 **「允许这些脚本并重试」**（只需一次）；
+5. 安装完成后按面板提示 **重启 dsh web**。
+
+> ℹ️ 包名是 **`@ds-hu/dsh-pocket`**：npm 上不带作用域的 `dsh-pocket` 是**原版**（PIN 模型，不是本项目）——别装错。
+> ⚠️ **已经装过 GitHub 版或旧版的用户**：`github:` 规格会把版本 pin 在当时的提交上，光重启不会升级。请先在插件页卸载旧版，再用上面的命令或插件页安装 `@ds-hu/dsh-pocket`。
+> 🔄 更新：npm 安装的包重跑一次 `dsh plugin --profile web add @ds-hu/dsh-pocket@latest -w` 并重启（插件页暂不提供 npm 安装的自动更新）。设置页「一键更新」仅适用于 GitHub 安装（重跑 add 重新 pin 最新提交）与本地 clone 软链（`git pull --ff-only`，开发方式见 [LOCAL-DEV.md](./LOCAL-DEV.md)）。
 
 ### 第一步：一次性初始化（在本机，约 2 分钟）
 
@@ -170,7 +179,7 @@ npx @deepseek-ai/dsh web
 | 重启电脑后要重新登录                                     | 会话绑定 dsh web 进程（进程级随机密钥），**这是刻意设计**：进程重启即旧会话全部失效                                                                                                                                 |
 | 隧道域名变了                                             | OAuth 应用回调地址 + 设置页白名单两处都改，然后重开初始化页保存（需重新绑定）                                                                                                           |
 | 点「重启 dsh web」后页面提示进程在后台运行                | 自重启的新进程是 detached 后台进程（不挂终端），是页内更新的标准做法；停止它：macOS/Linux `lsof -ti :3080 \| xargs kill -9`；Windows `netstat -ano \| findstr :3080` → `taskkill /PID <PID> /F` |
-| 想手动更新到最新版                                        | 重新安装一次并重启：`dsh plugin --profile web add github:cup113/dsh-pocket-oauth -w`（pnpm 会把版本 pin 到当时的 main 提交）；本地 clone 软链安装则 `git pull` 后重启 `dsh web`                                |
+| 想手动更新到最新版                                        | npm 安装：`dsh plugin --profile web add @ds-hu/dsh-pocket@latest -w` 后重启 `dsh web`；本地 clone 软链安装则 `git pull` 后重启 `dsh web`                                |
 
 ## 💻 DSH Desktop（桌面版）
 
@@ -181,7 +190,7 @@ npx @deepseek-ai/dsh web
 
 > `dsh.bundle` 与 `dsh.client` 都是**包级**声明。手机端 WebUI 以**包内子包**形式交付（`mobile/` = `dsh-pocket-mobile`），它自己声明 `dsh.client` 并提供客户端产物，因此面板里那张卡片有两个可分别开关的组件、手机端组件也有自己的「配置」页。子包的交付机制：`mobile/` 随根包 `package.json` 的 `files` 一起发布，**装完之后**由根包的 `postinstall`（`scripts/link-mobile-package.mjs`）在包内建出 `node_modules/dsh-pocket-mobile -> <包根>/mobile` 链接——DSH 解析那条 row 时只在包内 `node_modules` 里找这个包名，所以链接必须存在。
 >
-> ⚠️ 从 GitHub 安装时，pnpm 11 会先拦下这个 `postinstall`：命令以 `ERR_PNPM_IGNORED_BUILDS` 失败一次，在**插件面板**点「允许这些脚本并重试」后再跑一次 add 即可（只需一次）。不能改用 `dependencies`/`bundledDependencies`：pnpm 会把 `file:./mobile` 相对 profile 目录解析而直接让安装失败，仓库里提交的 `node_modules/**` 也会在解包时被丢掉。
+> ⚠️ 安装时（npm 源与 GitHub 源都一样），pnpm 11 会先拦下这个 `postinstall`：命令以 `ERR_PNPM_IGNORED_BUILDS` 失败一次，在**插件面板**点「允许这些脚本并重试」后再跑一次 add 即可（只需一次）。不能改用 `dependencies`/`bundledDependencies`：pnpm 会把 `file:./mobile` 相对 profile 目录解析而直接让安装失败，仓库里提交的 `node_modules/**` 也会在解包时被丢掉。
 
 
 | 文件                               | 说明                                                                                                                                                     |

@@ -83,20 +83,29 @@ npm install -g @deepseek-ai/dsh     # global; verify with: dsh --version
 # Prefer not to install globally? Prefix every command with npx: npx @deepseek-ai/dsh <command>
 ```
 
+**Option 1: one-line install (npm registry)**
+
 ```sh
-# 1. Install this repo (from GitHub; the package is dsh-pocket, the repo is dsh-pocket-oauth)
-dsh plugin --profile web add github:cup113/dsh-pocket-oauth -w
+dsh plugin --profile web add @ds-hu/dsh-pocket -w --registry=https://registry.npmjs.org/
 #    This fails once with ERR_PNPM_IGNORED_BUILDS: the mobile subpackage is linked by the root
 #    package's postinstall, and pnpm 11 blocks dependency scripts by default. Click
 #    "Allow these scripts and retry" on the plugin panel, then re-run the command (one time only).
 
-# 2. Restart dsh web
+# Restart dsh web after it installs
 npx @deepseek-ai/dsh web
 ```
 
-> ⚠️ The npm package `dsh-pocket` is the **original** project (PIN-based, not this repo) — never install it with `dsh plugin add dsh-pocket`. This repo installs from GitHub only.
-> ⚠️ **Already installed an older version?** A `github:` spec pins the commit, so restarting is not enough: re-run the `add` command above (and allow the build script once) to get the fixed mobile subpackage.
-> 🔄 The in-UI "one-click update" detects the install kind first: a `github:` spec re-runs the `add` command (re-pinning the latest main commit); a local clone symlink (development, see [LOCAL-DEV.md](./LOCAL-DEV.md)) runs `git pull --ff-only`. Both restart dsh web afterwards.
+**Option 2: install from the DSH WebUI Plugins page**
+
+1. Open `dsh web` → **Settings → Plugins**;
+2. Click **"Add plugin"** and pick the **"Official npm registry"** source (`https://registry.npmjs.org/`);
+3. Enter the package name `@ds-hu/dsh-pocket` and click **"Install"**;
+4. If you see `ERR_PNPM_IGNORED_BUILDS` / blocked build scripts, click **"Allow these scripts and retry"** (one time only);
+5. When it finishes, **restart dsh web** as prompted.
+
+> ℹ️ The package name is **`@ds-hu/dsh-pocket`**: the unscoped `dsh-pocket` on npm is the **original** project (PIN-based, not this one) — don't install the wrong one.
+> ⚠️ **Already on the GitHub build or an older version?** A `github:` spec pins the commit, so restarting is not enough: uninstall the old plugin from the Plugins page, then install `@ds-hu/dsh-pocket` with either option above.
+> 🔄 Updates: for an npm install, re-run `dsh plugin --profile web add @ds-hu/dsh-pocket@latest -w` and restart (the Plugins page does not auto-update npm installs yet). The in-UI "one-click update" only covers GitHub installs (re-runs `add` to re-pin the latest commit) and local clone symlinks (`git pull --ff-only`, development setup — see [LOCAL-DEV.md](./LOCAL-DEV.md)).
 
 
 ### Step 1: one-time setup (on this machine, ~2 minutes)
@@ -171,7 +180,7 @@ Open `https://your-fixed-domain` on the phone → tap "**Sign in with Gitee**" (
 | Sign in again after every reboot                     | Sessions are bound to the dsh web process (a per-process random key) — **by design**: a restart invalidates all sessions                                                        |
 | The tunnel domain changed                            | Update the OAuth app callback URL **and** the settings allowlist, then re-save the setup page (re-binding required)                                                               |
 | After "Restart dsh web" the page says it runs in background | The new process is detached on purpose; stop it with `lsof -ti :3080 \| xargs kill -9` (macOS/Linux) or `netstat -ano \| findstr :3080` + `taskkill /PID <PID> /F` (Windows)  |
-| Stuck on 0.x                                         | `^0.x` can't jump to 1.x: update with `--latest` (`dsh plugin --profile web update dsh-pocket --latest -w`)                                                                        |
+| Stuck on 0.x                                         | `^0.x` can't jump to 1.x: for an npm install run `dsh plugin --profile web add @ds-hu/dsh-pocket@latest -w` and restart `dsh web`                                                   |
 
 ## 💻 DSH Desktop
 
@@ -182,7 +191,7 @@ Open `https://your-fixed-domain` on the phone → tap "**Sign in with Gitee**" (
 
 > Both `dsh.bundle` and `dsh.client` are **package-level** declarations. The Mobile Web UI is delivered as an **in-package subpackage** (`mobile/` = `dsh-pocket-mobile`) which declares `dsh.client` itself and ships its own browser half, so the panel card carries two independently switchable components and the mobile one has a **Configure** page. Delivery mechanism: `mobile/` is published with the root package via its `files` list, and **after installation** the root package's `postinstall` (`scripts/link-mobile-package.mjs`) creates `node_modules/dsh-pocket-mobile -> <package root>/mobile` inside the installed package — DSH resolves that row by looking for the package name under the package's own `node_modules`, so the link has to exist there.
 >
-> ⚠️ On a GitHub install pnpm 11 blocks that `postinstall` first: the command fails once with `ERR_PNPM_IGNORED_BUILDS` — click **Allow these scripts and retry** on the plugin panel, then run the same `add` again (one time only). `dependencies`/`bundledDependencies` cannot replace it: pnpm resolves `file:./mobile` against the *profile* directory and fails the whole install, and any `node_modules/**` committed to the repo is dropped when the artifact is unpacked.
+> ⚠️ On install (npm and GitHub sources alike) pnpm 11 blocks that `postinstall` first: the command fails once with `ERR_PNPM_IGNORED_BUILDS` — click **Allow these scripts and retry** on the plugin panel, then run the same `add` again (one time only). `dependencies`/`bundledDependencies` cannot replace it: pnpm resolves `file:./mobile` against the *profile* directory and fails the whole install, and any `node_modules/**` committed to the repo is dropped when the artifact is unpacked.
 
 
 | File                 | Purpose                                                                                                                                                                        |
