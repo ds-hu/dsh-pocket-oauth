@@ -448,7 +448,7 @@ async function oauthProxy({ cfg, session, upstreamPort, fetchImpl, githubFetchIm
   });
 }
 
-test('认证门：未配置 fail closed（页面 503 指引 setup；API 503）；loopback 免认证', async () => {
+test('认证门：未配置 fail closed（页面 503 指引 setup；API 503）；loopback 也一视同仁', async () => {
   const up = await fakeUpstream();
   const cfg = { value: null };
   const session = { key: 'sk-1' };
@@ -462,10 +462,10 @@ test('认证门：未配置 fail closed（页面 503 指引 setup；API 503）�
     const api = await raw(proxy.port, { host: 'pocket.example.com', path: '/api/x', headers: { accept: 'application/json' } });
     assert.equal(api.status, 503);
     assert.equal(JSON.parse(api.body).error, 'oauth-not-configured');
-    // loopback（Host 与源一致）→ 免认证直通上游
-    const local = await raw(proxy.port, { host: `127.0.0.1:${proxy.port}` });
-    assert.equal(local.status, 200);
-    assert.match(local.body, /dsh-upstream/);
+    // loopback（Host 与源一致）→ 不再免认证：未初始化时同样 fail closed
+    const local = await raw(proxy.port, { host: `127.0.0.1:${proxy.port}`, headers: { accept: 'text/html' } });
+    assert.equal(local.status, 503, '本机也要认证：未初始化时给同一个 503 指引页');
+    assert.match(local.body, /pocket-setup/, '本机页面同样指向初始化入口');
   } finally {
     await proxy.close();
     await new Promise((r) => up.server.close(r));
@@ -851,15 +851,15 @@ test('登出路由：清除会话 cookie（Max-Age=0）', async () => {
   }
 });
 
-test('WS upgrade：非 loopback 无会话 cookie → 401；带会话 cookie → 101 透传', async () => {
+test('WS upgrade：任何来源（含 loopback）无会话 cookie → 401；带会话 cookie → 101 透传', async () => {
   const up = await fakeUpstream();
   const cfg = { value: { clientId: 'cid', clientSecret: 'sec', callbackOrigins: ['https://pocket.example.com'], boundUid: '4242', boundLogin: 'alice' } };
   const proxy = await oauthProxy({ cfg, session: { key: 'sk-1' }, upstreamPort: up.port });
   const cookie = sessionCookieValue('4242', 'sk-1');
-  const wsHandshake = (headers) => new Promise((resolve) => {
+  const wsHandshake = (headers, host = 'pocket.example.com') => new Promise((resolve) => {
     const sock = connect(proxy.port, '127.0.0.1', () => {
       sock.write(
-        'GET /api/events.host HTTP/1.1\r\nHost: pocket.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
+        `GET /api/events.host HTTP/1.1\r\nHost: ${host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n`
         + 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n'
         + (headers ? `${headers}\r\n` : '')
         + '\r\n',
@@ -876,23 +876,10 @@ test('WS upgrade：非 loopback 无会话 cookie → 401；带会话 cookie → 
   try {
     assert.equal(await wsHandshake(null), 'denied', '无 cookie 的 WS 握手被拒');
     assert.equal(await wsHandshake(`Cookie: ${SESSION_COOKIE}=${cookie}`), 'ok', '带 cookie 的 WS 握手透传');
-    // loopback Host（源也是 loopback）→ 免认证
-    const loop = await new Promise((resolve) => {
-      const sock = connect(proxy.port, '127.0.0.1', () => {
-        sock.write(
-          `GET /api/events.host HTTP/1.1\r\nHost: 127.0.0.1:${proxy.port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n`
-          + 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n',
-        );
-      });
-      let buf = '';
-      const timer = setTimeout(() => { sock.destroy(); resolve('timeout'); }, 2000);
-      sock.on('data', (c) => {
-        buf += c.toString('latin1');
-        if (buf.includes('101')) { clearTimeout(timer); sock.destroy(); resolve('ok'); }
-      });
-      sock.on('error', () => { clearTimeout(timer); resolve('denied'); });
-    });
-    assert.equal(loop, 'ok', 'loopback WS 免认证');
+    // loopback Host（源也是 loopback）不再是免认证旁路：WS 同样要会话 cookie
+    const loopHost = `127.0.0.1:${proxy.port}`;
+    assert.equal(await wsHandshake(null, loopHost), 'denied', '本机 WS 握手也要会话');
+    assert.equal(await wsHandshake(`Cookie: ${SESSION_COOKIE}=${cookie}`, loopHost), 'ok', '本机带 cookie 正常透传');
   } finally {
     await proxy.close();
     await new Promise((r) => up.server.close(r));

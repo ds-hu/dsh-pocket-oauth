@@ -3,6 +3,7 @@
   "description": "把 DeepSeek Harness 装进你的口袋：单端口 3081 + Gitee / GitHub OAuth 登录（初始化时二选一），自建隧道（固定域名）即可远程实时同屏访问电脑上的 DSH。",
   "type": "module",
   "main": "lib/index.js",
+  "icon": "./icon.svg",
   "bin": {
     "dsh-pocket": "bin/dsh-pocket.mjs"
   },
@@ -11,6 +12,7 @@
       "default": "./lib/index.js"
     },
     "./client": "./client/client.js",
+    "./icon": "./icon.svg",
     "./lib/*": "./lib/*",
     "./package.json": "./package.json"
   },
@@ -20,12 +22,15 @@
     "client",
     "mobile",
     "scripts",
+    "assets",
+    "icon.svg",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build:client": "node client/build.mjs",
+    "build:pwa-icons": "node scripts/build-pwa-icons.mjs",
     "postinstall": "node scripts/link-mobile-package.mjs",
     "pretest": "npm run build:client",
     "release": "semantic-release",

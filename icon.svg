@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="DSH Pocket">
+  <!-- 插件面板图标（DSH 从 package.json 的 icon 字段取，转 data URL）。
+       与 assets/pwa/*.png 同一套几何：圆角蓝底 + 白色手机剪影、屏幕镂空露底。
+       改这个文件时同步跑 node scripts/build-pwa-icons.mjs 重新生成 PWA 位图。 -->
+  <title>DSH Pocket</title>
+  <defs>
+    <linearGradient id="dsh-pocket-tile" x1="32" y1="0" x2="32" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5B7CFF"/>
+      <stop offset="1" stop-color="#3F57D6"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#dsh-pocket-tile)"/>
+  <rect x="18.56" y="12.8" width="26.88" height="38.4" rx="4.8" fill="#FFFFFF"/>
+  <rect x="21.25" y="15.49" width="21.5" height="33.02" rx="2.4" fill="url(#dsh-pocket-tile)"/>
+</svg>
