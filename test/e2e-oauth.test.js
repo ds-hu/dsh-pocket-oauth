@@ -126,7 +126,7 @@ async function startEntry({ upstreamPort, dshHome, gitee, github, applyFn = appl
   };
 }
 
-test('E2E（Gitee）：未初始化 fail closed → 本机绑定（写盘）→ 本机免登录 → 隧道域名同账号登录 → 换账号被拒', async () => {
+test('E2E（Gitee）：未初始化 fail closed → 本机绑定（写盘）→ 本机也要登录 → 隧道域名同账号登录 → 换账号被拒', async () => {
   const up = await fakeUpstream();
   const home = await mkdtemp(join(tmpdir(), 'dshp-e2e-'));
   const gitee = { uid: '4242', login: 'alice' };
@@ -139,10 +139,10 @@ test('E2E（Gitee）：未初始化 fail closed → 本机绑定（写盘）→ 
     assert.equal(blocked.status, 503, '未初始化时隧道域名被拒');
     assert.match(blocked.body, /pocket-setup/, '给出本机初始化入口');
 
-    // 2) 本机 loopback 免认证：直通真实上游
-    const local = await raw(entry.port, { host: loopbackHost });
-    assert.equal(local.status, 200, 'loopback 免认证');
-    assert.match(local.body, /real-dsh-upstream/);
+    // 2) 本机 loopback 也要认证：未初始化时同样 fail closed（不再有免认证旁路）
+    const local = await raw(entry.port, { host: loopbackHost, headers: { accept: 'text/html' } });
+    assert.equal(local.status, 503, 'loopback 也要认证：未初始化时一样 fail closed');
+    assert.match(local.body, /pocket-setup/, '本机页面给出初始化入口');
 
     // 3) 本机 setup 保存凭据（真实写盘；表单回传初始化页下发的 nonce）
     const setupPage = await raw(entry.port, { host: loopbackHost, path: '/pocket-setup' });

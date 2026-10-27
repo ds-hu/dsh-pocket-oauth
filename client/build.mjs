@@ -1,6 +1,14 @@
 // dsh-pocket 网页客户端打包：
-//   - client/index.jsx → client/client.js（loader id: dsh-pocket 远程操控）
-//   - mobile/client/index.jsx → mobile/client/client.js（loader id: dsh-pocket-mobile 手机端 WebUI）
+//   - client/index.jsx → client/client.js（loader id = 根包名，即 package.json 的 name）
+//   - mobile/client/index.jsx → mobile/client/client.js（loader id = 手机端子包的 name）
+//
+// **loader id 必须等于所属包的 name**：宿主把每个插件包当作一个客户端模块，浏览器按
+// **包名**去请求 `<name>/client` 并要求同一个 id 完成注册。id 与包名不一致时页面会炸成
+//     @ds-hu/dsh-pocket: import failed: client-modules: could not load "@ds-hu/dsh-pocket":
+//     plugins/??...: loaded without registering "@ds-hu/dsh-pocket" via __ModuleLoader__.load
+// 且整页 "Failed to load plugins"（改包名却忘了改这里 = 整个 Web GUI 起不来）。
+// 所以 id 一律从 manifest 读，不写字面量；测试也按 manifest 断言。
+import { readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +17,10 @@ import { build } from 'esbuild';
 const sourceDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(sourceDir, '..');
 
+/** 两个包的 manifest：包名就是各自的 loader id（唯一事实来源）。 */
+const rootManifest = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), 'utf8'));
+const mobileManifest = JSON.parse(readFileSync(resolve(packageRoot, 'mobile/package.json'), 'utf8'));
+
 /**
  * 打包目标：入口、默认产物路径、loader id、以及一致性测试用的产物覆盖环境变量。
  * 只要设置了任意一个 OUT 环境变量，就**只**构建被覆盖的目标——测试不会顺手改写工作区里
@@ -16,13 +28,13 @@ const packageRoot = resolve(sourceDir, '..');
  */
 export const TARGETS = Object.freeze([
   {
-    id: process.env.DSH_POCKET_CLIENT_ID ?? 'dsh-pocket',
+    id: process.env.DSH_POCKET_CLIENT_ID ?? rootManifest.name,
     entry: resolve(packageRoot, 'client/index.jsx'),
     output: resolve(packageRoot, 'client/client.js'),
     override: process.env.DSH_POCKET_CLIENT_OUT,
   },
   {
-    id: process.env.DSH_POCKET_MOBILE_CLIENT_ID ?? 'dsh-pocket-mobile',
+    id: process.env.DSH_POCKET_MOBILE_CLIENT_ID ?? mobileManifest.name,
     entry: resolve(packageRoot, 'mobile/client/index.jsx'),
     output: resolve(packageRoot, 'mobile/client/client.js'),
     override: process.env.DSH_POCKET_MOBILE_CLIENT_OUT,

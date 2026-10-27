@@ -139,6 +139,10 @@ grep -A2 'dsh-pocket:' ~/.dsh/profiles/web/pnpm-lock.yaml
 
 **手机上是桌面排版、没有汉堡按钮**：移动端排版只在窗口宽度 < 1024px 时生效（与 DSH 框架折叠侧边栏的断点一致）。桌面浏览器把窗口缩窄即可复现；手机上先用「插件 → dsh-pocket」卡片确认 `dsh-pocket-mobile` 是开着的。
 
+> 本机预览也要先登录：认证对所有来源一致（loopback 不再免认证），`http://127.0.0.1:3081` 首次打开是登录页，用绑定账号过一遍即可（cookie 30 天）。只看 3080 的桌面界面就直连 3080，不经过代理。
+
+**改了 PWA 图标**：画法在 `scripts/build-pwa-icons.mjs`，重跑 `node scripts/build-pwa-icons.mjs` 生成 `assets/pwa/*.png`（`--check` 只比对不写盘）；`test/pwa.test.js` 会校验仓库里的 PNG 与生成器一致，忘了重新生成会红。
+
 **代理端口 3081 起不来**：插件没加载成功。检查安装目录/软链路径是否正确、仓库依赖是否装好；也可以 `curl -s http://127.0.0.1:3080/` 看返回的 HTML 里有没有 `dsh-pocket/client.js`。
 
 **那条 `dsh-pocket-mobile` row 一直 Not running / `failed to import`**：子包链接没建出来。先看 `ls ~/.dsh/profiles/<p>/node_modules/dsh-pocket/node_modules/`——若没有 `dsh-pocket-mobile`，说明 `postinstall` 没跑过（多半是那次 `add` 卡在 build-blocked）：在插件面板允许脚本后重跑一次 add 命令，或手动在该包目录里执行 `node scripts/link-mobile-package.mjs`。

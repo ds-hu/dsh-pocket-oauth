@@ -42,8 +42,9 @@ What it looks like — the phone shows the exact same UI as your computer, live:
 | 🚪 Single port           | Only **3081** is exposed (the proxy). It rewrites inbound Host/Origin to loopback and forwards to your local dsh web — **no dsh config changes**, and no 0.0.0.0 binding (which dsh forbids)                     |
 | 🔐 Gitee / GitHub sign-in | **Replaces the access PIN entirely**: pick **one** provider during setup (Gitee in mainland China, GitHub abroad) and bind that account (provider + uid); afterwards any device signs in with the **same account** through an allowlisted origin. Switching means re-selecting and re-binding |
 | 🔗 Multi callback URLs   | Both Gitee and GitHub accept multiple callback URLs (GitHub: up to 10): local `http://127.0.0.1:3081/...`, your tunnel domain `https://your-domain/...`, optionally a LAN IP — **whichever origin you visit is the callback used**             |
-| 🏠 Loopback is free      | `127.0.0.1` / `localhost` needs no sign-in (being on the machine is already proof), and the setup page is **loopback-only**                                                                                  |
-| 🧱 Fail closed           | With no credentials or no bound account, **every non-loopback request is refused** — no "installed and exposed" window                                                                                       |
+| 📲 Installable PWA       | "Install app / Add to Home screen" gives a standalone window with its own icon (the proxy serves the manifest and icons itself, so **installing works even before signing in**); it is named "DSH Pocket" and does not collide with "DeepSeek Harness" on 3080 |
+| 🧱 One auth rule         | **Every origin must sign in**, loopback included: the proxy holds dsh web's launch token, so a loopback exemption would hand 3080's credentials to any local process. The setup page stays loopback-only and remains the lockout recovery path |
+| 🧱 Fail closed           | With no credentials or no bound account, **every request is refused** — no "installed and exposed" window                                                                                                   |
 | 🌐 Bring your own tunnel | The plugin manages **no tunnel at all**: point a **fixed domain** at `http://127.0.0.1:3081` with frp, Tailscale Funnel, your own nginx reverse proxy, any port-forwarding service (fixed domain required, see below) |
 | 📱 QR per origin         | The settings tab renders a QR code for every allowlisted origin; scan it and tap "Sign in with Gitee" / "Sign in with GitHub" (whichever provider is configured)                                              |
 | 🧘 Session persistence   | Signing in sets an HttpOnly session cookie (30 days) — **no repeated prompts**; sessions are bound to the dsh web process (**restart/update ⇒ sign in again**)                                                |
@@ -138,12 +139,18 @@ Copy the resulting **Client ID** and **Client Secret**.
 Forward a **fixed domain** to `http://127.0.0.1:3081` with whatever you like (frp, Tailscale Funnel, your own nginx reverse proxy, any port-forwarding service). Key points:
 
 - **The domain must be fixed**: both providers match callback URLs exactly, so a changing domain breaks the callback (this is also why the plugin no longer ships a random-domain tunnel)
-- **Keep the original domain as the Host header** (the default for mainstream tunnels): rewriting Host to `127.0.0.1` makes public traffic look local and skips sign-in
+- **Keep the original domain as the Host header** (the default for mainstream tunnels): the auth decision floors a claimed Host with the unforgeable TCP source address, so rewriting Host no longer skips sign-in — but the callback origin is picked from the current host, so a rewritten Host gets a 403 on the sign-in page
 - The tunnel URL must be **identical** to one allowlisted origin (`https://` and `http://` count as different)
 
 ### Step 3: use it from the phone
 
 Open `https://your-fixed-domain` on the phone → tap "**Sign in with Gitee**" (or "**Sign in with GitHub**" if that's the configured provider — the button follows the provider) → authorize with the **same** account → you're in. The UI matches your computer and stays in sync.
+
+**Want it as an app**: pick "**Install app / Add to Home screen**" from the browser menu on the sign-in page (or once inside). You get a separate "DSH Pocket" — blue phone icon, no address bar, opening at `/` (sign-in still applies).
+
+- **Installs straight from the sign-in page**: the manifest and icons are served by the proxy **without** the auth gate, so the install entry exists before you sign in (that was exactly the old 3080-yes / 3081-no asymmetry)
+- **Any entry works**: every icon and the manifest use in-site paths, so tunnel domain, LAN IP and `localhost` share one install — no reinstall when the domain changes
+- **It is a different app from 3080**: installing from 3080 yields "DeepSeek Harness"; both can coexist
 
 > **Another device**: just repeat step 3 (same account), no re-setup needed.
 > **Changing the tunnel domain**: update both the OAuth app callback URL and the settings allowlist, then re-save the setup page (re-binding is required).
@@ -153,13 +160,13 @@ Open `https://your-fixed-domain` on the phone → tap "**Sign in with Gitee**" (
 ## ⚠️ Security (read this)
 
 - **dsh can execute code on your computer.** Authentication is your **Gitee or GitHub account**: only the account **bound during setup (provider *and* uid must both match)** gets in — any other account (even one with its own OAuth app) is rejected, and identical uids across the two providers cannot sneak through
-- **Loopback is unauthenticated**: reaching it locally already means you're on the machine; that's why the **setup page is loopback-only** (remote access gets 403)
-- **Fail closed**: with no client credentials, or credentials without a bound account, **every non-loopback request is refused** (an actionable page for browsers, 503 for APIs)
-- **Never rewrite Host in your tunnel**: if a reverse proxy rewrites Host to `127.0.0.1`, public traffic is treated as local and skips sign-in — the one deployment detail to watch
+- **Every origin signs in — loopback included**: the proxy holds dsh web's launch token (newer dsh needs `?token=` on `/` to mint a cookie), so a loopback exemption would hand 3080's credentials to **any** local process, other OS accounts on the same machine included. The local browser signs in once (30-day cookie); **`http://127.0.0.1:3081/pocket-setup` remains the only unauthenticated, loopback-only surface** — that is where you fix config, re-bind, or recover from a lockout
+- **Fail closed**: with no client credentials, or credentials without a bound account, **every request is refused** (an actionable page for browsers, 503 for APIs)
+- **Never rewrite Host in your tunnel**: the auth decision floors a claimed Host with the unforgeable TCP source address, so a rewritten Host no longer skips sign-in — but the callback origin is picked from the current host, so it now just fails with a 403. Forward the original domain
 - **The client secret never leaves this machine**: it lives in `$DSH_HOME/dsh-pocket/oauth.json` (mode 0600); the settings tab and RPC **never echo it** (only whether it is configured)
 - **Gitee / GitHub is only the identity provider**: it never sees your machine's data; the access token is discarded right after fetching your uid — **nothing is persisted**
-- **There is no PIN any more**: non-browser clients (curl, etc.) can therefore no longer use port 3081 — the inherent trade-off of the OAuth model
-- **If your provider is unreachable**: remote sign-in is impossible (loopback is unaffected). Gitee needs `gitee.com`; GitHub needs **both** `github.com` and `api.github.com` (Gitee is the safer pick on mainland-China networks)
+- **There is no PIN any more**: non-browser clients (curl, etc.) can therefore no longer use port 3081 — the inherent trade-off of the OAuth model (local scripts included: they need the session cookie)
+- **If your provider is unreachable**: nobody signs in (loopback included). Open `/pocket-setup` locally to change credentials/provider, or just use 3080 on the computer. Gitee needs `gitee.com`; GitHub needs **both** `github.com` and `api.github.com`
 - **Allowlisted origins are your attack surface**: don't share your tunnel domain with untrusted people; any allowlisted origin can start a sign-in (only the bound account passes)
 - **Local admin actions verify their origin (CSRF protection)**: saving credentials, starting a bind and signing out all check `Sec-Fetch-Site`/`Origin` and require a process-random nonce — other web pages cannot forge these local actions from the victim's browser; the session cookie carries `Secure` on `https` origins (omitted on `http`, where browsers would drop it)
 
@@ -177,6 +184,8 @@ Open `https://your-fixed-domain` on the phone → tap "**Sign in with Gitee**" (
 | Picked GitHub, sign-in keeps failing                 | GitHub requires outbound access to **both** `github.com` and `api.github.com`; switch to Gitee from an unstable network (re-select it in `/pocket-setup` and bind again)           |
 | GitHub tokens only last 8 hours — will I get logged out? | No. The plugin exchanges the code, fetches the user **once** and discards the token — it never stores or reuses it, so short-lived tokens / refresh tokens are irrelevant         |
 | The phone keeps bouncing back to the sign-in page    | The browser dropped the session cookie (Safari drops cookies for `http://` + bare IP; there is a dedicated hint page). Use a Chromium browser, or an `https://` tunnel domain    |
+| `127.0.0.1:3081` now asks me to sign in too          | Expected: auth is the same for every origin. Sign in once (30-day cookie), or use 3080 for local work; config changes / re-binding / lockout recovery stay on `http://127.0.0.1:3081/pocket-setup` (no auth, loopback only) |
+| No "Install app / Add to Home screen" on the phone   | It needs a secure context: `http://<LAN-IP>:3081` is not one, so browsers hide the install entry. Use the `https://` tunnel domain (or `localhost` on the machine) |
 | Sign in again after every reboot                     | Sessions are bound to the dsh web process (a per-process random key) — **by design**: a restart invalidates all sessions                                                        |
 | The tunnel domain changed                            | Update the OAuth app callback URL **and** the settings allowlist, then re-save the setup page (re-binding required)                                                               |
 | After "Restart dsh web" the page says it runs in background | The new process is detached on purpose; stop it with `lsof -ti :3080 \| xargs kill -9` (macOS/Linux) or `netstat -ano \| findstr :3080` + `taskkill /PID <PID> /F` (Windows)  |
