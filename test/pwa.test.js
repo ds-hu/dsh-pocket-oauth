@@ -9,12 +9,15 @@ import assert from 'node:assert/strict';
 import { createServer, request as httpRequest } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { createPocketProxy } from '../lib/proxy.mjs';
 import { SESSION_COOKIE, sessionCookieValue, OAUTH_CALLBACK_PATH } from '../lib/oauth.mjs';
 import { decodePng, ICONS, renderIconPixels } from '../scripts/build-pwa-icons.mjs';
 
-const ROOT = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+// 包根用 fileURLToPath 取：URL.pathname 在 Windows 给 `/D:/…`，且会把空格/CJK 转义成 %20，
+// 拼盘符的 hack 在含空格的路径上会直接失效。
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 /** 假上游：回显一个可识别的 body，用来区分"透传到应用"和"被门拦下"。 */
 async function fakeUpstream() {
