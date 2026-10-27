@@ -34,6 +34,8 @@ import { installSettingsAdapter } from '../mobile/client/settings-adapter.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const bundle = readFileSync(join(root, 'mobile', 'client', 'client.js'), 'utf8');
+/** 子包 manifest：loader id 的唯一事实来源（见 client/build.mjs）。 */
+const mobilePkg = JSON.parse(readFileSync(join(root, 'mobile', 'package.json'), 'utf8'));
 
 /** 取出 `选择器 { … }` 规则体，用于对单条规则做断言。 */
 function ruleBody(css, selector) {
@@ -811,7 +813,7 @@ test('观察器：帧未挂载时等待，挂载后收敛成只盯抽屉属性�
 // ── bundle 契约 ─────────────────────────────────────────────────────────────
 
 test('移动端 bundle 契约：loader id、React 绑定与插件导出', () => {
-  assert.ok(bundle.includes('id: "dsh-pocket-mobile"'), 'loader id = dsh-pocket-mobile');
+  assert.ok(bundle.includes(`id: "${mobilePkg.name}"`), `loader id 必须等于子包 name（${mobilePkg.name}）`);
   assert.ok(bundle.includes('var React = require("react")'), 'factory 必须注入 React');
   assert.ok(bundle.includes('name: () => name'), '导出 name');
   assert.ok(bundle.includes('inject: () => inject'), '导出 inject');

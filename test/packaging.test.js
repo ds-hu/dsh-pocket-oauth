@@ -20,6 +20,7 @@ import {
   existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
+import { runInNewContext } from 'node:vm';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { POCKET_RPC_CHANNEL, POCKET_ENDPOINTS } from '../client/api.js';
@@ -31,23 +32,26 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const patch = readFileSync(join(root, 'cordis.patch.yml'), 'utf8');
 const mobileManifest = JSON.parse(readFileSync(join(root, 'mobile', 'package.json'), 'utf8'));
 
-/** cordis.patch.yml 里插入的 row（id + name），按出现顺序。 */
+/** cordis.patch.yml 里插入的 row（id + name），按出现顺序。行名允许带 YAML 引号。 */
 function patchRows() {
-  return [...patch.matchAll(/-\s*id:\s*([^\s#]+)\s*\n\s*name:\s*([^\s#]+)/g)].map(([, id, name]) => ({ id, name }));
+  return [...patch.matchAll(/-\s*id:\s*([^\s#]+)\s*\n\s*name:\s*("?[^\s#"]+"?)/g)]
+    .map(([, id, rawName]) => ({ id, name: rawName.replace(/^["']|["']$/g, '') }));
 }
 
 // ── bundle patch：两条 row ───────────────────────────────────────────────────
 
-test('cordis.patch.yml：一个 bundle、两条 row，都是裸包名', () => {
+test('cordis.patch.yml：一个 bundle、两条 row，都是包名（不是子路径）', () => {
   const rows = patchRows();
   assert.deepEqual(rows, [
-    { id: 'dsh-pocket', name: 'dsh-pocket' },
+    { id: 'dsh-pocket', name: '@ds-hu/dsh-pocket' },
     { id: 'dsh-pocket-mobile', name: 'dsh-pocket-mobile' },
-  ], '两条 row：远程操控 + 手机端 WebUI（独立客户端包；id/name 稳定 → 面板开关覆盖在升级后依然生效）');
+  ], '两条 row：远程操控（带作用域的根包名）+ 手机端 WebUI（包内子包）；id/name 稳定 → 面板开关覆盖在升级后依然生效');
   // 行 id 是面板开关写 disabled 覆盖的键：必须唯一
   assert.equal(new Set(rows.map((r) => r.id)).size, 2);
   for (const row of rows) {
-    assert.ok(!row.name.includes('/'), `${row.name} 必须是裸包名：带 "/" 的行名解析不到包`);
+    // 作用域包名（@scope/name）里的 "/" 合法；被挡的是 dsh-pocket/mobile 这种子路径
+    const isScoped = row.name.startsWith('@') && row.name.split('/').length === 2;
+    assert.ok(isScoped || !row.name.includes('/'), `${row.name} 必须是包名：带 "/" 的子路径解析不到包`);
   }
 });
 
@@ -55,6 +59,11 @@ test('cordis.patch.yml：一个 bundle、两条 row，都是裸包名', () => {
 
 test('根 manifest：files 带 mobile/、postinstall 建链，且没有 file:/bundled 依赖', () => {
   assert.ok(pkg.files.includes('mobile'), 'files 必须带上 mobile：子包靠它进安装物');
+  // PWA：图标是运行时读盘的（lib/pwa.mjs），漏了 assets 会让安装态的 manifest 指向 404
+  assert.ok(pkg.files.includes('assets'), 'files 必须带上 assets：PWA 图标要随包发布');
+  assert.ok(pkg.files.includes('icon.svg'), 'files 必须带上 icon.svg：插件面板图标');
+  assert.equal(pkg.icon, './icon.svg', '插件面板图标走 package.json 的 icon 字段（DSH 转成 data URL）');
+  assert.equal(pkg.exports['./icon'], './icon.svg', 'icon 也要可导出（DSH 的另一条解析路径）');
   assert.equal(pkg.scripts.postinstall, 'node scripts/link-mobile-package.mjs', 'postinstall 是子包的交付机制');
   // 这三种写法都被证明到不了安装态，回潮即回归：
   assert.equal(pkg.dependencies['dsh-pocket-mobile'], undefined,
@@ -110,7 +119,7 @@ test('移动端实现：源码与客户端产物结构完整', () => {
   assert.ok(existsSync(join(root, 'mobile', 'client', 'settings-adapter.js')), 'settings-adapter.js 存在');
   assert.ok(existsSync(join(root, 'mobile', 'client', 'styles.js')), 'styles.js 存在（移动端样式的唯一来源）');
   const bundle = readFileSync(join(root, 'mobile', 'client', 'client.js'), 'utf8');
-  assert.ok(bundle.includes('id: "dsh-pocket-mobile"'), 'mobile bundle loader id 正确');
+  assert.ok(bundle.includes(`id: "${mobileManifest.name}"`), 'mobile bundle loader id 必须等于子包 name');
   assert.ok(bundle.includes('var React = require("react")'), 'mobile bundle 注入 React');
   assert.ok(bundle.includes('dsh-mobile-sidebar-backdrop'), 'mobile bundle 包含抽屉遮罩');
   assert.ok(bundle.includes('data-mobile-settings-view'), 'mobile bundle 包含两级设置导航');
@@ -196,6 +205,11 @@ test('打包：mobile/ 在 tarball 里，且 dsh-pocket-mobile 能从解包后�
     assert.ok(rels.includes('mobile/client/client.js'), 'tarball 缺少 mobile/client/client.js（手机端产物）');
     assert.ok(rels.includes('mobile/index.js'), 'tarball 缺少 mobile/index.js（子包宿主入口）');
     assert.ok(rels.includes('scripts/link-mobile-package.mjs'), 'tarball 缺少 postinstall 脚本');
+    // PWA 资源必须真的在产物里：缺了它，安装态下浏览器只会拿到 404 → 又变成装不上
+    assert.ok(rels.includes('assets/pwa/icon-192.png'), 'tarball 缺少 assets/pwa/icon-192.png');
+    assert.ok(rels.includes('assets/pwa/maskable-512.png'), 'tarball 缺少 assets/pwa/maskable-512.png');
+    assert.ok(rels.includes('lib/pwa.mjs'), 'tarball 缺少 lib/pwa.mjs（manifest 与图标路由）');
+    assert.ok(rels.includes('icon.svg'), 'tarball 缺少 icon.svg（插件面板图标）');
     assert.ok(!rels.some((rel) => rel.startsWith('node_modules/')),
       '安装物里不得再带仓库内的 node_modules 内容（pnpm 解包时会丢，且会掩盖真实解析）');
 
@@ -239,7 +253,7 @@ test('打包：mobile/ 在 tarball 里，且 dsh-pocket-mobile 能从解包后�
 
 test('客户端产物：远程操控产物不含移动端专有标记', () => {
   const remote = readFileSync(join(root, 'client', 'client.js'), 'utf8');
-  assert.ok(remote.includes('id: "dsh-pocket"'), '根产物 loader id = 包名 dsh-pocket');
+  assert.ok(remote.includes(`id: "${pkg.name}"`), `根产物 loader id 必须等于包名 ${pkg.name}（客户端模块系统按包名请求、按同一 id 注册）`);
   assert.ok(remote.includes('PocketSettingsTab'), '根产物含「手机访问」设置页');
   for (const marker of [
     '/dsh-pocket-mobile',
@@ -269,4 +283,27 @@ test('远程操控通道：端点集合里没有移动端端点（它们已随�
   for (const gone of ['mobile.status', 'mobile.rightbar.setEnabled', 'mobile.fileRead']) {
     assert.ok(!endpoints.includes(gone), `${gone} 不应再出现在任何契约里`);
   }
+});
+
+// ── loader id ↔ 包名：改了包名却没改 build.mjs 会让整个 Web GUI 起不来 ─────────
+//
+// 宿主把每个插件包当成一个客户端模块：浏览器按**包名**请求 `<包名>/client`，并要求同一个
+// id 完成 `__ModuleLoader__.load` 注册。id 与包名不一致时的真实报错是：
+//   @ds-hu/dsh-pocket: import failed: client-modules: could not load "@ds-hu/dsh-pocket":
+//   plugins/??…: loaded without registering "@ds-hu/dsh-pocket" via __ModuleLoader__.load
+// 页面停在 "Failed to load plugins"，其余插件也一起被拖下水。
+// v2.10.x 就是这么炸的：包名改成 @ds-hu/dsh-pocket，而 build.mjs 里的 id 还是 dsh-pocket。
+// 所以这里**真的执行一遍产物**（只给一个 __ModuleLoader__ 桩），断言它注册的 id 与 manifest 一致。
+test('客户端产物：注册的 loader id 必须等于所属包的 name', () => {
+  const registeredId = (file) => {
+    const captured = [];
+    const sandbox = { window: { __ModuleLoader__: { load: (registration) => captured.push(registration) } } };
+    runInNewContext(readFileSync(join(root, file), 'utf8'), sandbox);
+    assert.equal(captured.length, 1, `${file} 必须恰好向 __ModuleLoader__ 注册一次（factory 只是被登记，不执行）`);
+    return captured[0].id;
+  };
+  assert.equal(registeredId('client/client.js'), pkg.name,
+    '根产物注册的 id 与 package.json 的 name 不一致：客户端模块系统会报 loaded without registering');
+  assert.equal(registeredId('mobile/client/client.js'), mobileManifest.name,
+    '手机端子包注册的 id 与其 manifest 的 name 不一致');
 });
