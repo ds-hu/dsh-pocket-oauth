@@ -12,7 +12,7 @@ import { join } from 'node:path';
 
 import { createPocketProxy } from '../lib/proxy.mjs';
 import { SESSION_COOKIE, sessionCookieValue, OAUTH_CALLBACK_PATH } from '../lib/oauth.mjs';
-import { buildIcons, ICONS } from '../scripts/build-pwa-icons.mjs';
+import { decodePng, ICONS, renderIconPixels } from '../scripts/build-pwa-icons.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 
@@ -280,13 +280,17 @@ test('迁移安全：初始化页保存时自动补上本机两条 origin（否�
   }
 });
 
-test('提交的图标与生成器输出一致（防止改了画法忘了重新生成）', () => {
-  const built = buildIcons();
-  for (const [name, expected] of built) {
-    const actual = readFileSync(join(ROOT, 'assets', 'pwa', name));
-    assert.ok(actual.equals(expected), `assets/pwa/${name} 与 scripts/build-pwa-icons.mjs 不一致，重跑生成器`);
-    const { size } = ICONS[name];
-    assert.equal(actual.readUInt32BE(16), size, `${name} 宽度`);
-    assert.equal(actual.readUInt32BE(20), size, `${name} 高度`);
+test('提交的图标与生成器输出一致（按像素比对，防止改了画法忘了重新生成）', () => {
+  // 比像素而不是比字节：PNG 的 zlib 压缩输出会随 Node 版本变化，字节比对会在别的机器上
+  // 无故变红；图标的真实内容是像素。
+  for (const [name, { size, maskable }] of Object.entries(ICONS)) {
+    const png = decodePng(readFileSync(join(ROOT, 'assets', 'pwa', name)));
+    assert.equal(png.width, size, `${name} 宽度`);
+    assert.equal(png.height, size, `${name} 高度`);
+    const expected = renderIconPixels(size, { maskable });
+    assert.ok(
+      Buffer.from(png.pixels).equals(Buffer.from(expected)),
+      `assets/pwa/${name} 的像素与 scripts/build-pwa-icons.mjs 不一致，重跑 node scripts/build-pwa-icons.mjs`,
+    );
   }
 });

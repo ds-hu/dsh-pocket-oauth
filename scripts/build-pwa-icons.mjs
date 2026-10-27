@@ -12,7 +12,7 @@
 //   node scripts/build-pwa-icons.mjs           # 重新生成四个 PNG
 //   node scripts/build-pwa-icons.mjs --check   # 只校验，过期/缺失时退出码 1
 
-import { deflateSync } from 'node:zlib';
+import { deflateSync, inflateSync } from 'node:zlib';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -124,8 +124,9 @@ function samplePixel(u, v, { maskable }) {
   return [color[0], color[1], color[2], 255];
 }
 
-/** 4× 超采样渲染（再盒式降采样），得到边缘平滑的 RGBA 缓冲。 */
-function render(size, opts) {
+/** 4× 超采样渲染（再盒式降采样），得到边缘平滑的 RGBA 缓冲。
+ *  这是图标的**稳定产物**：PNG 字节会随 Node 自带 zlib 的版本略有差异，像素不会。 */
+export function renderIconPixels(size, opts) {
   const SS = 4;
   const out = new Uint8Array(size * size * 4);
   const sums = new Float64Array(size * size * 4);
@@ -167,9 +168,50 @@ export const ICONS = Object.freeze({
 export function buildIcons() {
   const files = new Map();
   for (const [name, { size, maskable }] of Object.entries(ICONS)) {
-    files.set(name, encodePng(size, size, render(size, { maskable })));
+    files.set(name, encodePng(size, size, renderIconPixels(size, { maskable })));
   }
   return files;
+}
+
+/**
+ * 解码本文件产出的 PNG（8bit RGBA、filter=0、无交错）：`{ width, height, pixels }`。
+ *
+ * 用途是**按像素**校验仓库里的图标，而不是按字节比：zlib 的压缩输出会随 Node 版本变化，
+ * 字节比对会在别人机器上无故变红；像素是图标的真实内容。
+ */
+export function decodePng(buf) {
+  const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (!buf.subarray(0, 8).equals(PNG_SIGNATURE)) throw new Error('不是 PNG');
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  const idat = [];
+  while (offset + 12 <= buf.length) {
+    const length = buf.readUInt32BE(offset);
+    const type = buf.toString('latin1', offset + 4, offset + 8);
+    const data = buf.subarray(offset + 8, offset + 8 + length);
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      bitDepth = data[8];
+      colorType = data[9];
+    } else if (type === 'IDAT') {
+      idat.push(data);
+    } else if (type === 'IEND') break;
+    offset += 12 + length;
+  }
+  if (bitDepth !== 8 || colorType !== 6) throw new Error(`只支持 8bit RGBA，实际 depth=${bitDepth} colorType=${colorType}`);
+  const raw = inflateSync(Buffer.concat(idat));
+  const stride = width * 4;
+  const pixels = new Uint8Array(stride * height);
+  for (let y = 0; y < height; y++) {
+    const rowStart = y * (stride + 1);
+    if (raw[rowStart] !== 0) throw new Error(`不支持的 PNG 行过滤器 ${raw[rowStart]}`);
+    pixels.set(raw.subarray(rowStart + 1, rowStart + 1 + stride), y * stride);
+  }
+  return { width, height, pixels };
 }
 
 // ---------- CLI ----------
@@ -183,7 +225,12 @@ if (isMain) {
   for (const [name, buf] of files) {
     const target = `${OUT_DIR}${name}`;
     if (check) {
-      const same = existsSync(target) && readFileSync(target).equals(buf);
+      // 按像素比对：字节差异只是 zlib 版本不同，不代表图标过期
+      let same = false;
+      try {
+        same = existsSync(target)
+          && Buffer.from(decodePng(readFileSync(target)).pixels).equals(Buffer.from(decodePng(buf).pixels));
+      } catch { same = false; }
       if (!same) { drift += 1; console.error(`✗ ${name} 与生成器不一致（重跑 node scripts/build-pwa-icons.mjs）`); }
       else console.log(`✓ ${name} ${buf.length} B`);
     } else {
